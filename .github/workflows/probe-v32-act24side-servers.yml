@@ -8,13 +8,20 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Search current official hot-update lists for act24side audio
+      - name: Install extractor dependencies
+        run: python3 -m pip install --index-url https://pypi.org/simple 'UnityPy~=1.25' 'lz4~=4.4'
+      - name: Find and extract surviving act24side audio
         run: |
-          python3 - <<'PY' | tee v32-act24side-servers.txt
-          import json, urllib.request
+          python3 - <<'PY' | tee v32-act24side-extract.txt
+          import json, urllib.request, zipfile, tempfile, os, shutil
+          from pathlib import Path
+          import lz4.block, UnityPy
+          from UnityPy.enums.BundleFile import CompressionFlags
+          from UnityPy.helpers import CompressionHelper
+
           configs={
             'kr':'https://ak-conf.arknights.kr/config/prod/official/network_config',
             'en':'https://ak-conf.arknights.global/config/prod/official/network_config',
@@ -26,24 +33,63 @@ jobs:
           def gj(u):
             req=urllib.request.Request(u,headers={'User-Agent':'RhodesReaderKR-v3.2-probe'})
             with urllib.request.urlopen(req,timeout=60) as r:return json.load(r)
-          for server,url in configs.items():
-            try:
-              outer=gj(url); conf=json.loads(outer['content']); net=conf['configs'][conf['funcVer']]['network']
-              ver=gj(net['hv'].replace('{0}','Android')); res=ver['resVersion']; base=f"{net['hu']}/Android/assets/{res}"
-              hot=gj(base+'/hot_update_list.json')
-              hits=[]
-              for x in hot['abInfos']:
-                n=str(x.get('name') or '')
-                low=n.lower()
-                if 'act24side' in low and low.startswith('audio/'):
-                  hits.append(n)
-              print('\nSERVER',server,'resVersion',res,'HITS',len(hits),'BASE',base)
-              for n in hits: print(n)
-            except Exception as e:
-              print('\nSERVER',server,'ERROR',repr(e))
+          def extra(data,pos,end):
+            n=0
+            while pos<end:
+              b=data[pos]; n+=b; pos+=1
+              if b!=0xff: break
+            return n,pos
+          def lz4ak(src,usize):
+            ip=op=0; buf=bytearray(src); end=len(buf)
+            while ip<end:
+              literal=buf[ip]&0xF; match=(buf[ip]>>4)&0xF
+              buf[ip]=(literal<<4)|match; ip+=1
+              if literal==0xF:
+                x,ip=extra(buf,ip,end); literal+=x
+              ip+=literal; op+=literal
+              if op>=usize: break
+              off=(buf[ip]<<8)|buf[ip+1]
+              buf[ip]=off&0xff; buf[ip+1]=(off>>8)&0xff; ip+=2
+              if match==0xF:
+                x,ip=extra(buf,ip,end); match+=x
+              match+=4; op+=match
+            return lz4.block.decompress(buf,uncompressed_size=usize)
+          CompressionHelper.DECOMPRESSION_MAP[CompressionFlags.LZHAM]=lz4ak
+          def dat_name(name): return name.replace('/','_').replace('#','__').rsplit('.',1)[0]+'.dat'
+          allclips={}
+          with tempfile.TemporaryDirectory(prefix='act24-') as td:
+            td=Path(td)
+            for server,url in configs.items():
+              try:
+                outer=gj(url); conf=json.loads(outer['content']); net=conf['configs'][conf['funcVer']]['network']
+                ver=gj(net['hv'].replace('{0}','Android')); res=ver['resVersion']; base=f"{net['hu']}/Android/assets/{res}"
+                hot=gj(base+'/hot_update_list.json')
+                hits=[str(x.get('name') or '') for x in hot['abInfos'] if 'act24side' in str(x.get('name') or '').lower() and str(x.get('name') or '').lower().startswith('audio/')]
+                print('\nSERVER',server,'resVersion',res,'HITS',len(hits))
+                for name in hits:
+                  print('BUNDLE',name)
+                  dat=td/(server+'.dat'); unpack=td/(server+'-unpack')
+                  if unpack.exists(): shutil.rmtree(unpack)
+                  req=urllib.request.Request(base+'/'+dat_name(name),headers={'User-Agent':'RhodesReaderKR-v3.2-probe'})
+                  with urllib.request.urlopen(req,timeout=180) as r,open(dat,'wb') as f: shutil.copyfileobj(r,f)
+                  with zipfile.ZipFile(dat) as z: z.extractall(unpack)
+                  for ab in unpack.rglob('*.ab'):
+                    env=UnityPy.load(str(ab))
+                    for obj in env.objects:
+                      if obj.type.name!='AudioClip': continue
+                      clip=obj.parse_as_object(); cname=str(clip.m_Name or '')
+                      if cname:
+                        allclips.setdefault(cname.lower(),[]).append((server,name,cname))
+                        print('CLIP',cname)
+              except Exception as e:
+                print('SERVER_ERROR',server,repr(e))
+          print('\nUNIQUE_CLIPS',len(allclips))
+          Path('v32-act24side-clips.json').write_text(json.dumps(allclips,ensure_ascii=False,indent=2),encoding='utf-8')
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: v32-act24side-server-probe
-          path: v32-act24side-servers.txt
+          name: v32-act24side-extract-probe
+          path: |
+            v32-act24side-extract.txt
+            v32-act24side-clips.json
           retention-days: 7
