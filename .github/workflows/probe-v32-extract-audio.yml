@@ -1,0 +1,71 @@
+name: Probe v3.2 extract KR audio
+
+on:
+  push:
+    branches: ["v3.2-official-audio"]
+  workflow_dispatch:
+
+jobs:
+  extract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve current KR CDN and download sample bundles
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,urllib.request,zipfile,os
+          from pathlib import Path
+          def gj(u):
+              r=urllib.request.Request(u,headers={'User-Agent':'RhodesReaderKR-v3.2-extract'})
+              with urllib.request.urlopen(r,timeout=60) as x:return json.load(x)
+          o=gj('https://ak-conf.arknights.kr/config/prod/official/network_config')
+          c=json.loads(o['content']);n=c['configs'][c['funcVer']]['network']
+          v=gj(n['hv'].replace('{0}','Android'));res=v['resVersion'];base=f"{n['hu']}/Android/assets/{res}"
+          names=['audio/sound_beta_2/music/act25side/m_avg_decisivebattle.ab','audio/sound_beta_2/avg_se_0.ab']
+          Path('samples').mkdir()
+          for name in names:
+              dat=name.replace('/','_').replace('#','__').split('.')[0]+'.dat'
+              url=base+'/'+dat
+              print('DOWNLOAD',name,url)
+              req=urllib.request.Request(url,headers={'User-Agent':'RhodesReaderKR-v3.2-extract'})
+              with urllib.request.urlopen(req,timeout=120) as r,open('samples/'+dat,'wb') as f:
+                  while True:
+                      b=r.read(1024*1024)
+                      if not b:break
+                      f.write(b)
+              print('DAT BYTES',os.path.getsize('samples/'+dat))
+              with zipfile.ZipFile('samples/'+dat) as z:
+                  print('ZIP',z.namelist())
+                  z.extractall('samples/unpacked')
+          print('resVersion',res)
+          PY
+
+      - name: Install ArknightsStudioCLI
+        shell: bash
+        run: |
+          curl -L --fail --retry 3 -o cli.zip https://raw.githubusercontent.com/ArknightsAssets/NewAssets/main/ArknightsStudioCLI/ArknightsStudioCLI-net6-linux64.v1.1.5.zip
+          mkdir cli
+          unzip -q cli.zip -d cli
+          find cli -maxdepth 2 -type f | head -50
+          chmod +x cli/ArknightsStudioCLI
+
+      - name: Extract sample AudioClips
+        shell: bash
+        run: |
+          mkdir extracted
+          while IFS= read -r -d '' f; do
+            echo "EXTRACT $f"
+            cli/ArknightsStudioCLI "$f" -g containerFull -t audio -o extracted || true
+          done < <(find samples/unpacked -type f -name '*.ab' -print0)
+          echo '=== EXTRACTED FILES ==='
+          find extracted -type f -printf '%P\t%s\n' | sort | tee v32-extracted-files.txt
+          test -s v32-extracted-files.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v32-audio-extract-probe
+          path: v32-extracted-files.txt
+          retention-days: 7
