@@ -1,0 +1,85 @@
+name: Probe v3.2 all CN nonvoice audio
+
+on:
+  push:
+    branches: ["v3.2-official-audio"]
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install extractor
+        run: python3 -m pip install --index-url https://pypi.org/simple 'UnityPy~=1.25' 'lz4~=4.4'
+      - name: Scan every CN non-voice audio bundle
+        run: |
+          python3 - <<'PY' | tee v32-cn-all-audio.txt
+          import json,urllib.request,urllib.error,zipfile,tempfile,shutil
+          from pathlib import Path
+          import lz4.block,UnityPy
+          from UnityPy.enums.BundleFile import CompressionFlags
+          from UnityPy.helpers import CompressionHelper
+          MUSIC={'m_avg_act24side_intro','m_avg_act24side_loop','m_bat_mhrors_intro','m_bat_mhrors_loop'}
+          def wanted(n): return n.lower().startswith('act24side_') or n.lower() in MUSIC
+          def gj(u):
+            q=urllib.request.Request(u,headers={'User-Agent':'RhodesReaderKR-v3.2-cnall'})
+            with urllib.request.urlopen(q,timeout=90) as r:return json.load(r)
+          def extra(d,p,e):
+            n=0
+            while p<e:
+              b=d[p];n+=b;p+=1
+              if b!=255:break
+            return n,p
+          def dec(src,usize):
+            ip=op=0;b=bytearray(src);end=len(b)
+            while ip<end:
+              l=b[ip]&15;m=(b[ip]>>4)&15;b[ip]=(l<<4)|m;ip+=1
+              if l==15:x,ip=extra(b,ip,end);l+=x
+              ip+=l;op+=l
+              if op>=usize:break
+              off=(b[ip]<<8)|b[ip+1];b[ip]=off&255;b[ip+1]=(off>>8)&255;ip+=2
+              if m==15:x,ip=extra(b,ip,end);m+=x
+              m+=4;op+=m
+            return lz4.block.decompress(b,uncompressed_size=usize)
+          CompressionHelper.DECOMPRESSION_MAP[CompressionFlags.LZHAM]=dec
+          def dat(n):return n.replace('/','_').replace('#','__').rsplit('.',1)[0]+'.dat'
+          outer=gj('https://ak-conf.hypergryph.com/config/prod/official/network_config');c=json.loads(outer['content']);net=c['configs'][c['funcVer']]['network'];v=gj(net['hv'].replace('{0}','Android'));res=v['resVersion'];base=f"{net['hu']}/Android/assets/{res}"
+          infos=[]
+          for x in gj(base+'/hot_update_list.json')['abInfos']:
+            n=str(x.get('name') or '').lower()
+            if not n.startswith('audio/'):continue
+            if '/voice' in n or 'voice/' in n or 'charword' in n:continue
+            infos.append(x)
+          print('RES',res,'CANDIDATES',len(infos))
+          found={};errors=[];bytes_dl=0
+          with tempfile.TemporaryDirectory(prefix='cnall-') as td:
+            td=Path(td)
+            for i,x in enumerate(infos,1):
+              name=str(x['name']);d=td/'x.dat';u=td/'u';d.unlink(missing_ok=True)
+              if u.exists():shutil.rmtree(u)
+              try:
+                req=urllib.request.Request(base+'/'+dat(name),headers={'User-Agent':'RhodesReaderKR-v3.2-cnall'})
+                with urllib.request.urlopen(req,timeout=180) as r,open(d,'wb') as f:shutil.copyfileobj(r,f)
+                bytes_dl+=d.stat().st_size
+                with zipfile.ZipFile(d) as z:z.extractall(u)
+                for ab in u.rglob('*.ab'):
+                  env=UnityPy.load(str(ab))
+                  for obj in env.objects:
+                    if obj.type.name!='AudioClip':continue
+                    clip=obj.parse_as_object();nm=str(clip.m_Name or '')
+                    if wanted(nm):
+                      found.setdefault(nm.lower(),[]).append([name,nm]);print('FOUND',name,nm)
+              except Exception as e:errors.append([name,repr(e)]);print('ERR',name,repr(e))
+              if i%100==0:print('PROGRESS',i,'/',len(infos),'found',len(found),'GiB',round(bytes_dl/1024**3,2))
+          Path('v32-cn-all-audio.json').write_text(json.dumps({'res':res,'found':found,'errors':errors,'bytes':bytes_dl},ensure_ascii=False,indent=2),encoding='utf-8')
+          print('DONE found',len(found),'errors',len(errors),'GiB',round(bytes_dl/1024**3,2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v32-cn-all-audio-probe
+          path: |
+            v32-cn-all-audio.txt
+            v32-cn-all-audio.json
+          retention-days: 7
