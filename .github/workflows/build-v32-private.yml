@@ -1,0 +1,200 @@
+name: Build v3.2 Private Maximum Offline APK
+
+on:
+  push:
+    branches: ["v3.2-build-private"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - name: Checkout app
+        uses: actions/checkout@v4
+
+      - name: Materialize v3 native source
+        shell: bash
+        run: |
+          mkdir -p app/src/main/java/dev/chanwoo/rhodesreader
+          cat scripts/v3src_00.b64 scripts/v3src_01.b64 scripts/v3src_02.b64 scripts/v3src_03.b64 scripts/v3src_04.b64 scripts/v3src_05.b64 scripts/v3src_06.b64 scripts/v3src_07.b64 | tr -d '\r\n' | base64 -d > app/src/main/java/dev/chanwoo/rhodesreader/MainActivity.java
+          test -s app/src/main/java/dev/chanwoo/rhodesreader/MainActivity.java
+          grep -q 'class MainActivity' app/src/main/java/dev/chanwoo/rhodesreader/MainActivity.java
+          sed -i -E 's/Rhodes Reader KR 3\.[01]\.0/Rhodes Reader KR 3.2.0/g' app/src/main/java/dev/chanwoo/rhodesreader/MainActivity.java
+          sha256sum app/src/main/java/dev/chanwoo/rhodesreader/MainActivity.java | tee v32-source.sha256
+
+      - name: Validate private offline runtime
+        run: |
+          ! grep -R 'android.permission.INTERNET' -n app/src/main/AndroidManifest.xml
+          ! grep -R 'android.webkit.WebView' -n app/src/main/java
+          ! grep -R 'https://\|http://' -n app/src/main/java/dev/chanwoo/rhodesreader/MainActivity.java
+          grep -q "versionName '3.2.0'" app/build.gradle
+          grep -q 'versionCode 30200' app/build.gradle
+
+      - name: Fetch latest Korean story data
+        run: |
+          git clone --depth=1 --filter=blob:none --sparse https://github.com/050644zf/ArknightsStoryJson.git upstream-story
+          git -C upstream-story sparse-checkout set ko_KR/gamedata/story img/banners
+
+      - name: Index baseline image/audio sources
+        run: |
+          git clone --depth=1 --filter=blob:none --no-checkout https://github.com/fexli/ArknightsResource.git upstream-images
+          git clone --depth=1 --filter=blob:none --no-checkout --branch global-server-voices https://github.com/PseudoMon/arknights-audio.git upstream-audio
+
+      - name: Build baseline full media pack
+        run: |
+          python3 scripts/prepare_full_assets.py upstream-story upstream-images upstream-audio | tee full-media-report.txt
+          du -sh app/src/main/assets
+
+      - name: Index supplemental media sources
+        run: |
+          git clone --depth=1 --filter=blob:none --no-checkout https://github.com/Aceship/Arknight-Images.git upstream-aceship
+          git clone --depth=1 --filter=blob:none --no-checkout --branch cn https://github.com/ArknightsAssets/ArknightsAssets2.git upstream-assets2
+          git clone --depth=1 --filter=blob:none --no-checkout --branch main https://github.com/PseudoMon/arknights-audio.git upstream-audio-main
+
+      - name: Supplement image coverage
+        run: |
+          python3 scripts/supplement_media_v31.py upstream-images upstream-aceship upstream-assets2 upstream-audio-main | tee supplement-v31-report.txt
+          python3 - <<'PY'
+          import json
+          s=json.load(open('app/src/main/assets/media_index.json',encoding='utf-8'))['stats']
+          print(json.dumps({k:v for k,v in s.items() if k.startswith('v31_')},ensure_ascii=False,indent=2))
+          assert s['v31_backgroundFound'] == s['v31_backgroundRequested']
+          assert s['v31_imageFound'] >= 1326
+          assert s['v31_characterFound'] >= 9000
+          PY
+
+      - name: Fetch latest KR story variables
+        run: |
+          git clone --depth=1 --filter=blob:none --sparse https://github.com/ArknightsAssets/ArknightsGamedata.git upstream-gamedata
+          git -C upstream-gamedata sparse-checkout set kr/gamedata/story/story_variables.json
+          cp upstream-gamedata/kr/gamedata/story/story_variables.json story_variables_kr.json
+          test -s story_variables_kr.json
+
+      - name: Install official asset extractor
+        run: python3 -m pip install --index-url https://pypi.org/simple 'UnityPy~=1.25' 'lz4~=4.4'
+
+      - name: Rebuild audio from current official KR Hot Update
+        run: |
+          python3 scripts/supplement_official_audio_v32.py app/src/main/assets/story story_variables_kr.json | tee official-audio-v32-report.txt
+          python3 - <<'PY'
+          import json
+          r=json.load(open('v32-official-audio-report.json',encoding='utf-8'))
+          s=r['stats']
+          print(json.dumps(s,ensure_ascii=False,indent=2))
+          assert s['v32_musicFound'] >= 439
+          assert s['v32_sfxFound'] >= 1325
+          assert not s['v32OfficialAudioErrors']
+          PY
+
+      - name: Recover aliases and surviving official CN Monster Hunter BGM
+        run: |
+          python3 scripts/supplement_legacy_audio_v32.py | tee legacy-audio-v32-report.txt
+
+      - name: Calculate final coverage
+        run: |
+          python3 - <<'PY' | tee v32-final-coverage.txt
+          import json
+          from pathlib import Path
+          media=json.load(open('app/src/main/assets/media_index.json',encoding='utf-8'))
+          stats=media.get('stats',{})
+          requested={
+            'background':stats.get('v31_backgroundRequested',0),
+            'image':stats.get('v31_imageRequested',0),
+            'character':stats.get('v31_characterRequested',0),
+            'music':stats.get('v32_musicRequested',0),
+            'sfx':stats.get('v32_sfxRequested',0),
+          }
+          found={
+            'background':sum(bool(v) for v in media.get('images',{}).get('background',{}).values()),
+            'image':sum(bool(v) for v in media.get('images',{}).get('image',{}).values()),
+            'character':sum(bool(v) for v in media.get('images',{}).get('character',{}).values()),
+            'music':sum(bool(v) for v in media.get('audio',{}).get('music',{}).values()),
+            'sfx':sum(bool(v) for v in media.get('audio',{}).get('sfx',{}).values()),
+          }
+          out={'requested':requested,'found':found,'missing':{k:max(0,requested[k]-found[k]) for k in requested}}
+          Path('v32-final-coverage.json').write_text(json.dumps(out,ensure_ascii=False,indent=2),encoding='utf-8')
+          print(json.dumps(out,ensure_ascii=False,indent=2))
+          assert found['background'] >= requested['background']
+          assert found['image'] >= 1326
+          assert found['character'] >= 9000
+          assert found['music'] >= 445
+          assert found['sfx'] >= 1325
+          PY
+
+      - name: Prepare optimization tools
+        run: |
+          python3 -c 'import PIL' || python3 -m pip install pillow
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ffmpeg
+          fi
+          ffmpeg -version | head -1
+
+      - name: Optimize media for APK
+        run: |
+          python3 scripts/optimize_media_pack.py | tee optimize-media-report.txt
+          python3 - <<'PY'
+          import json
+          s=json.load(open('app/src/main/assets/media_index.json',encoding='utf-8'))['stats']
+          print('optimized bytes',s['totalAssetBytesAfterOptimization'])
+          assert s['optimizedForApk'] is True
+          assert s['totalAssetBytesAfterOptimization'] < 3_600_000_000
+          assert len(s.get('audioOptimizationErrors',[])) == 0
+          PY
+          du -sh app/src/main/assets
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: yes | sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+
+      - name: Set up Gradle 9.6
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+
+      - name: Build v3.2 private APK
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Stage and verify APK
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk RhodesReaderKR-v3.2.0-private-max-offline.apk
+          unzip -l RhodesReaderKR-v3.2.0-private-max-offline.apk | grep -q 'assets/story_index.json'
+          unzip -l RhodesReaderKR-v3.2.0-private-max-offline.apk | grep -q 'assets/media_index.json'
+          unzip -l RhodesReaderKR-v3.2.0-private-max-offline.apk | grep -q 'assets/story/'
+          unzip -l RhodesReaderKR-v3.2.0-private-max-offline.apk | grep -q 'assets/media/images/'
+          unzip -l RhodesReaderKR-v3.2.0-private-max-offline.apk | grep -q 'assets/media/audio/'
+          sha256sum RhodesReaderKR-v3.2.0-private-max-offline.apk | tee RhodesReaderKR-v3.2.0-private-max-offline.apk.sha256
+          ls -lh RhodesReaderKR-v3.2.0-private-max-offline.apk
+
+      - name: Upload private v3.2 APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RhodesReaderKR-v3.2.0-private-max-offline
+          path: |
+            RhodesReaderKR-v3.2.0-private-max-offline.apk
+            RhodesReaderKR-v3.2.0-private-max-offline.apk.sha256
+            v32-final-coverage.json
+            v32-final-coverage.txt
+            v32-official-audio-report.json
+            v32-legacy-audio-report.json
+            full-media-report.txt
+            supplement-v31-report.txt
+            official-audio-v32-report.txt
+            legacy-audio-v32-report.txt
+            optimize-media-report.txt
+            app/src/main/assets/media_index.json
+            v32-source.sha256
+          compression-level: 0
+          retention-days: 30
