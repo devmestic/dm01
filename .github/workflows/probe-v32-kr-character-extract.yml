@@ -1,0 +1,67 @@
+name: Probe v3.2 KR character sprite extraction
+
+on:
+  push:
+    branches: ["v3.2-build-private"]
+    paths: ["KR_CHARACTER_EXTRACT_TRIGGER"]
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m pip install --index-url https://pypi.org/simple 'UnityPy~=1.25' 'lz4~=4.4' pillow
+      - name: Inspect official bundles
+        run: |
+          python3 - <<'PY' | tee v32-kr-character-extract.txt
+          import json,urllib.request,zipfile,tempfile,shutil
+          from pathlib import Path
+          import lz4.block,UnityPy
+          from UnityPy.enums.BundleFile import CompressionFlags
+          from UnityPy.helpers import CompressionHelper
+          def gj(u):
+            q=urllib.request.Request(u,headers={'User-Agent':'RhodesReaderKR-v3.2-char-probe'})
+            with urllib.request.urlopen(q,timeout=60) as r:return json.load(r)
+          def extra(d,p,e):
+            n=0
+            while p<e:
+              b=d[p];n+=b;p+=1
+              if b!=255:break
+            return n,p
+          def dec(src,usize):
+            ip=op=0;b=bytearray(src);e=len(b)
+            while ip<e:
+              l=b[ip]&15;m=(b[ip]>>4)&15;b[ip]=(l<<4)|m;ip+=1
+              if l==15:x,ip=extra(b,ip,e);l+=x
+              ip+=l;op+=l
+              if op>=usize:break
+              off=(b[ip]<<8)|b[ip+1];b[ip]=off&255;b[ip+1]=(off>>8)&255;ip+=2
+              if m==15:x,ip=extra(b,ip,e);m+=x
+              m+=4;op+=m
+            return lz4.block.decompress(b,uncompressed_size=usize)
+          CompressionHelper.DECOMPRESSION_MAP[CompressionFlags.LZHAM]=dec
+          def dat(n):return n.replace('/','_').replace('#','__').rsplit('.',1)[0]+'.dat'
+          outer=gj('https://ak-conf.arknights.kr/config/prod/official/network_config');c=json.loads(outer['content']);net=c['configs'][c['funcVer']]['network'];v=gj(net['hv'].replace('{0}','Android'));res=v['resVersion'];base=f"{net['hu']}/Android/assets/{res}"
+          bundles=['avg/characters/avg_npc_1777_1.ab','avg/characters/avg_npc_2040_1.ab','avg/characters/avg_172_svrash_1.ab']
+          with tempfile.TemporaryDirectory() as td:
+            td=Path(td)
+            for bn in bundles:
+              d=td/'x.dat';u=td/'u';d.unlink(missing_ok=True)
+              if u.exists():shutil.rmtree(u)
+              q=urllib.request.Request(base+'/'+dat(bn),headers={'User-Agent':'RhodesReaderKR-v3.2-char-probe'})
+              with urllib.request.urlopen(q,timeout=180) as r,open(d,'wb') as f:shutil.copyfileobj(r,f)
+              with zipfile.ZipFile(d) as z:z.extractall(u)
+              print('\nBUNDLE',bn)
+              for ab in u.rglob('*.ab'):
+                env=UnityPy.load(str(ab));print('AB',ab.name,'objects',len(env.objects))
+                for obj in env.objects:
+                  if obj.type.name in ('Texture2D','Sprite'):
+                    x=obj.parse_as_object();print(obj.type.name,repr(str(getattr(x,'m_Name',''))))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v32-kr-character-extract-probe
+          path: v32-kr-character-extract.txt
+          retention-days: 7
