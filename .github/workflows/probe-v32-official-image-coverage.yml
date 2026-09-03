@@ -1,0 +1,102 @@
+name: Probe v3.2 official KR character recovery
+
+on:
+  push:
+    branches: ["v3.2-build-private"]
+    paths: ["V32_IMAGE_RECOVERY_TRIGGER"]
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch story and static image indexes
+        run: |
+          git clone --depth=1 --filter=blob:none --sparse https://github.com/050644zf/ArknightsStoryJson.git story
+          git -C story sparse-checkout set ko_KR/gamedata/story
+          git clone --depth=1 --filter=blob:none --no-checkout https://github.com/fexli/ArknightsResource.git fexli
+          git clone --depth=1 --filter=blob:none --no-checkout https://github.com/Aceship/Arknight-Images.git ace
+          git clone --depth=1 --filter=blob:none --no-checkout --branch cn https://github.com/ArknightsAssets/ArknightsAssets2.git a2current
+          git clone --filter=blob:none --no-checkout https://github.com/ArknightsAssets/ArknightsAssets2.git a2hist
+          git -C a2hist fetch origin '+refs/heads/*:refs/remotes/origin/*'
+      - name: Build synthetic media index from current and historical static image coverage
+        run: |
+          mkdir -p app/src/main/assets/story app/src/main/assets/media/images
+          cp -a story/ko_KR/gamedata/story/. app/src/main/assets/story/
+          python3 - <<'PY'
+          import json,re,subprocess
+          from collections import defaultdict
+          from pathlib import Path
+          EX={'.png','.jpg','.jpeg','.webp'}
+          def clean(v):
+            if v is None:return ''
+            v=str(v).strip().strip('"').strip("'")
+            if v.startswith('$'):v=v[1:]
+            return v.strip()
+          def norm(v):return re.sub(r'[^a-z0-9]+','',v.lower())
+          def variants(k):return list(dict.fromkeys(x for x in (k,re.sub(r'[#\\$]+','_',k),Path(k.replace('\\\\','/')).name) if x))
+          req={'background':set(),'image':set(),'character':set()}
+          for fp in Path('app/src/main/assets/story').rglob('*.json'):
+            try:d=json.load(open(fp,encoding='utf-8'))
+            except:continue
+            for line in d.get('storyList',[]):
+              if not isinstance(line,dict):continue
+              prop=str(line.get('prop') or '').lower();a=line.get('attributes') or {}
+              if not isinstance(a,dict):a={}
+              im=clean(a.get('image'))
+              if im:req['background' if prop in ('background','backgroundtween') else 'image'].add(im)
+              if prop=='character':
+                for f in ('name','name2'):
+                  k=clean(a.get(f))
+                  if k and 'focus=' not in k and not k.startswith(','):req['character'].add(k)
+              fig=clean(line.get('figure_art'))
+              if fig and 'focus=' not in fig:req['character'].add(fig)
+          def tree(repo,prefix=None):
+            cmd=['git','-C',repo,'ls-tree','-r','--name-only','HEAD']
+            if prefix:cmd+=['--',prefix]
+            return subprocess.check_output(cmd,text=True,errors='replace').splitlines()
+          cur=tree('fexli','avgs')+tree('ace','avg')+tree('a2current')
+          hist=subprocess.check_output(['git','-C','a2hist','log','--all','--name-only','--pretty=format:','--','assets/dyn/avg'],text=True,errors='replace').splitlines()
+          def idx(paths):
+            ex=defaultdict(list);no=defaultdict(list)
+            for p in paths:
+              if Path(p).suffix.lower() not in EX:continue
+              s=Path(p).stem;ex[s.lower()].append(p);no[norm(s)].append(p)
+            return ex,no
+          ce,cn=idx(cur);he,hn=idx(hist)
+          media={'images':{'background':{},'image':{},'character':{}},'audio':{'music':{},'sfx':{}},'stats':{}}
+          for kind,keys in req.items():
+            for k in keys:
+              hit=False
+              for v in variants(k):
+                if ce.get(v.lower()) or he.get(v.lower()):hit=True;break
+              if not hit:
+                nc=cn.get(norm(k),[])+hn.get(norm(k),[])
+                if len(set(nc))==1:hit=True
+              if hit:media['images'][kind][k]='synthetic/existing.png'
+          json.dump(media,open('app/src/main/assets/media_index.json','w',encoding='utf-8'),ensure_ascii=False,separators=(',',':'))
+          print('synthetic existing', {k:len(v) for k,v in media['images'].items()})
+          PY
+      - name: Install extractor
+        run: python3 -m pip install --index-url https://pypi.org/simple 'UnityPy~=1.25' 'lz4~=4.4' pillow
+      - name: Recover missing character sprites from current KR bundles
+        run: python3 scripts/supplement_official_images_v32.py | tee v32-official-image-probe.txt
+      - name: Show unresolved
+        run: |
+          python3 - <<'PY'
+          import json
+          r=json.load(open('v32-official-image-report.json',encoding='utf-8'))
+          print('requested',r['requested'],'found',r['foundAfter'],'missing',r['missingAfter'],'recovered',len(r['recovered']))
+          print('unresolved keys',len(r['unresolved']))
+          for k,v in list(r['unresolved'].items())[:300]: print('UNRESOLVED',k,v)
+          print('bundleErrors',r['bundleErrors'])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v32-official-image-coverage-probe
+          path: |
+            v32-official-image-probe.txt
+            v32-official-image-report.json
+          retention-days: 7
