@@ -1,0 +1,68 @@
+name: Probe v3.2 KR official audio
+
+on:
+  push:
+    branches: ["v3.2-official-audio"]
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Probe current KR hot-update audio bundles
+        shell: bash
+        run: |
+          python3 - <<'PY' | tee v32-official-audio-probe.txt
+          import json, urllib.request, collections
+
+          def get_json(url):
+              req=urllib.request.Request(url,headers={'User-Agent':'RhodesReaderKR-v3.2-probe'})
+              with urllib.request.urlopen(req,timeout=60) as r:
+                  return json.load(r)
+
+          conf_outer=get_json('https://ak-conf.arknights.kr/config/prod/official/network_config')
+          conf=json.loads(conf_outer['content'])
+          net=conf['configs'][conf['funcVer']]['network']
+          hv=net['hv'].replace('{0}','Android')
+          version=get_json(hv)
+          res=version['resVersion']
+          base=f"{net['hu']}/Android/assets/{res}"
+          hot=get_json(base+'/hot_update_list.json')
+          infos=hot['abInfos']
+          audio=[x for x in infos if str(x.get('name','')).lower().startswith('audio/')]
+          def size(x):
+              for k in ('totalSize','abSize','size'):
+                  try:return int(x.get(k) or 0)
+                  except:pass
+              return 0
+          print('resVersion',res)
+          print('hot.versionId',hot.get('versionId'))
+          print('all bundles',len(infos))
+          print('audio bundles',len(audio))
+          print('audio declared bytes',sum(size(x) for x in audio))
+          groups=collections.Counter()
+          for x in audio:
+              p=x['name'].split('/')
+              groups['/'.join(p[:min(3,len(p))])]+=1
+          print('\nTOP GROUPS')
+          for k,v in groups.most_common(80):print(v,k)
+          print('\nMATCHING sound_beta/music/avg/battle')
+          keys=('sound_beta','music','avg','battle','dialog','player','enemy','general')
+          hits=[x for x in audio if any(k in x['name'].lower() for k in keys)]
+          for x in hits[:600]:print(x['name'],size(x))
+          print('\nFIRST AUDIO BUNDLES')
+          for x in audio[:300]:print(x['name'],size(x))
+          with open('v32-hot-audio-summary.json','w',encoding='utf-8') as f:
+              json.dump({'resVersion':res,'base':base,'audioCount':len(audio),'audioBytes':sum(size(x) for x in audio),'audio':audio},f,ensure_ascii=False)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v32-official-audio-probe
+          path: |
+            v32-official-audio-probe.txt
+            v32-hot-audio-summary.json
+          retention-days: 7
