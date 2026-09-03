@@ -1,21 +1,28 @@
-# Project status
+# PROJECT STATUS
 
-## v1.0.0
+## Rhodes Reader KR v2.0.0
 
 Status: release candidate
 
-Implemented:
-- Android WebView reader shell
-- ko_KR default route
-- persistent last route and scroll position
-- periodic reading-state autosave
-- local bookmarks
-- text zoom
-- keep-screen-on option
-- external-link isolation
-- HTTPS-only internal navigation
-- GitHub Actions APK build
-- automatic GitHub Release APK publishing
+Architecture:
+- Native Android Activity/UI
+- No WebView
+- No INTERNET permission
+- All Korean story JSON files embedded into APK assets during CI build
+- Build-time generated story index
 
-Validation target:
-- GitHub Actions build on JDK 17 / Gradle 9.6.0 / Android SDK 36
+Implemented:
+- Event browser
+- Full-text metadata search
+- Native story renderer for dialogue/multiline/subtitle/sticker/decision/predicate/comment
+- Fallback rendering for future text-bearing story commands
+- Per-story reading position persistence
+- Bookmarks
+- Last-read story
+- Text scaling
+- Keep-screen-on preference
+- GitHub Actions offline dataset packaging and APK verification
+
+Data scope:
+- Complete `ko_KR/gamedata/story/**/*.json` dataset from `050644zf/ArknightsStoryJson`
+- Text/story commands only. Game images/audio are intentionally not bundled.
