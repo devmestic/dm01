@@ -1,0 +1,105 @@
+name: Probe v3.2 deep legacy audio
+
+on:
+  push:
+    branches: ["v3.2-official-audio"]
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install extractor
+        run: python3 -m pip install --index-url https://pypi.org/simple 'UnityPy~=1.25' 'lz4~=4.4'
+      - name: Scan all CN/TW custom SE bundles for Monster Hunter clips
+        shell: bash
+        run: |
+          python3 - <<'PY' | tee v32-deep-legacy.txt
+          import json, urllib.request, zipfile, tempfile, shutil, re
+          from pathlib import Path
+          import lz4.block, UnityPy
+          from UnityPy.enums.BundleFile import CompressionFlags
+          from UnityPy.helpers import CompressionHelper
+
+          SERVERS={
+            'tw':'https://ak-conf-tw.gryphline.com/config/prod/official/network_config',
+            'cn':'https://ak-conf.hypergryph.com/config/prod/official/network_config',
+          }
+          MUSIC={'m_avg_act24side_intro','m_avg_act24side_loop','m_bat_mhrors_intro','m_bat_mhrors_loop'}
+          def gj(u):
+            q=urllib.request.Request(u,headers={'User-Agent':'RhodesReaderKR-v3.2-deep'})
+            with urllib.request.urlopen(q,timeout=90) as r:return json.load(r)
+          def extra(data,pos,end):
+            n=0
+            while pos<end:
+              b=data[pos]; n+=b; pos+=1
+              if b!=0xff: break
+            return n,pos
+          def lz4ak(src,usize):
+            ip=op=0; buf=bytearray(src); end=len(buf)
+            while ip<end:
+              lit=buf[ip]&15; mat=(buf[ip]>>4)&15; buf[ip]=(lit<<4)|mat; ip+=1
+              if lit==15: x,ip=extra(buf,ip,end); lit+=x
+              ip+=lit; op+=lit
+              if op>=usize: break
+              off=(buf[ip]<<8)|buf[ip+1]; buf[ip]=off&255; buf[ip+1]=(off>>8)&255; ip+=2
+              if mat==15: x,ip=extra(buf,ip,end); mat+=x
+              mat+=4; op+=mat
+            return lz4.block.decompress(buf,uncompressed_size=usize)
+          CompressionHelper.DECOMPRESSION_MAP[CompressionFlags.LZHAM]=lz4ak
+          def dat(name): return name.replace('/','_').replace('#','__').rsplit('.',1)[0]+'.dat'
+          def get_size(x):
+            for k in ('totalSize','size','compressedSize'):
+              try:
+                if x.get(k) is not None:return int(x[k])
+              except: pass
+            return 0
+          found={}
+          with tempfile.TemporaryDirectory(prefix='legacy-') as td:
+            td=Path(td)
+            for srv,confurl in SERVERS.items():
+              outer=gj(confurl); conf=json.loads(outer['content']); net=conf['configs'][conf['funcVer']]['network']
+              ver=gj(net['hv'].replace('{0}','Android')); res=ver['resVersion']; base=f"{net['hu']}/Android/assets/{res}"
+              infos=gj(base+'/hot_update_list.json')['abInfos']
+              candidates=[]
+              for x in infos:
+                n=str(x.get('name') or ''); low=n.lower()
+                if not low.startswith('audio/'): continue
+                if 'custom_se' in low or 'customse' in low:
+                  candidates.append(x); continue
+                stem=Path(low).stem
+                if stem in MUSIC or 'mhrors' in stem or 'act24side' in stem:
+                  candidates.append(x)
+              print('\nSERVER',srv,'res',res,'CANDIDATES',len(candidates),'DECLARED_BYTES',sum(get_size(x) for x in candidates))
+              for i,x in enumerate(candidates,1):
+                name=str(x['name']); d=td/'b.dat'; u=td/'u'; d.unlink(missing_ok=True)
+                if u.exists(): shutil.rmtree(u)
+                try:
+                  req=urllib.request.Request(base+'/'+dat(name),headers={'User-Agent':'RhodesReaderKR-v3.2-deep'})
+                  with urllib.request.urlopen(req,timeout=180) as r,open(d,'wb') as f: shutil.copyfileobj(r,f)
+                  with zipfile.ZipFile(d) as z:z.extractall(u)
+                  for ab in u.rglob('*.ab'):
+                    env=UnityPy.load(str(ab))
+                    for obj in env.objects:
+                      if obj.type.name!='AudioClip': continue
+                      c=obj.parse_as_object(); nm=str(c.m_Name or ''); lo=nm.lower()
+                      if lo.startswith('act24side_') or lo in MUSIC:
+                        found.setdefault(lo,[]).append([srv,name,nm])
+                        print('FOUND',srv,name,nm)
+                except Exception as e:
+                  print('ERR',srv,name,repr(e))
+                if i%25==0: print('PROGRESS',srv,i,'/',len(candidates),'found',len(found))
+          Path('v32-deep-legacy.json').write_text(json.dumps(found,ensure_ascii=False,indent=2),encoding='utf-8')
+          print('\nFOUND_UNIQUE',len(found))
+          print('FOUND_MUSIC',sorted(x for x in found if x in MUSIC))
+          print('FOUND_ACT24SIDE',sum(1 for x in found if x.startswith('act24side_')))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v32-deep-legacy-probe
+          path: |
+            v32-deep-legacy.txt
+            v32-deep-legacy.json
+          retention-days: 7
