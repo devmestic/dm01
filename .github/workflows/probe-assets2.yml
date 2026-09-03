@@ -1,0 +1,27 @@
+name: Probe ArknightsAssets2 Coverage
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "v3.1-coverage" ]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch Korean stories
+        run: |
+          git clone --depth=1 --filter=blob:none --sparse https://github.com/050644zf/ArknightsStoryJson.git story
+          git -C story sparse-checkout set ko_KR/gamedata/story
+      - name: Index ArknightsAssets2 CN without blobs
+        run: git clone --depth=1 --filter=blob:none --no-checkout --branch cn https://github.com/ArknightsAssets/ArknightsAssets2.git assets2
+      - name: Probe media names
+        run: python3 scripts/probe_assets2.py story assets2 | tee assets2-probe.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: assets2-probe
+          path: |
+            assets2-probe.json
+            assets2-probe.txt
