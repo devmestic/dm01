@@ -1,12 +1,12 @@
-name: Build v3.1 Maximum Media Offline APK
+name: Build and Publish v3.1 Maximum Media Offline APK
 
 on:
   workflow_dispatch:
   push:
-    branches: [ "v3.1-complete-media" ]
+    branches: [ "v3.1-release" ]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -137,3 +137,27 @@ jobs:
             v31-source.sha256
           compression-level: 0
           retention-days: 30
+
+      - name: Publish v3.1.0 release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v3.1.0
+          name: Rhodes Reader KR v3.1.0
+          target_commitish: v3.1-release
+          make_latest: true
+          body: |
+            Rhodes Reader KR v3.1.0 Max Media Offline
+
+            한국어 스토리 1,895편과 공개 소스에서 실제로 해석 가능한 스토리 이미지/오디오를 오프라인으로 포함합니다.
+
+            검증 기준:
+            - 배경: 882/882
+            - 일반 스토리 이미지: 1326/1328
+            - 캐릭터 스프라이트: 9021/9225
+            - BGM: 210/449
+            - SFX: 664/1394
+
+            공개 자산 저장소에 실제 파일이 없는 항목은 다른 자산으로 잘못 대체하지 않았습니다.
+          files: |
+            RhodesReaderKR-v3.1.0-max-media-offline.apk
+            RhodesReaderKR-v3.1.0-max-media-offline.apk.sha256
