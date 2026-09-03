@@ -1,83 +1,100 @@
-name: Build and Publish v3.1 Maximum Media Offline APK
+name: Build v3.2 Final Private Offline APK
 
 on:
   workflow_dispatch:
   push:
-    branches: [ "v3.1-release" ]
-
-permissions:
-  contents: write
+    branches: [ "v3.2-finalize" ]
+    paths:
+      - 'app/**'
+      - 'scripts/**'
+      - '.github/workflows/build-apk.yml'
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
     steps:
       - name: Checkout app
         uses: actions/checkout@v4
 
-      - name: Materialize native source
-        shell: bash
+      - name: Materialize native v3 source
         run: |
           mkdir -p app/src/main/java/dev/chanwoo/rhodesreader
           cat scripts/v3src_00.b64 scripts/v3src_01.b64 scripts/v3src_02.b64 scripts/v3src_03.b64 scripts/v3src_04.b64 scripts/v3src_05.b64 scripts/v3src_06.b64 scripts/v3src_07.b64 | tr -d '\r\n' | base64 -d > app/src/main/java/dev/chanwoo/rhodesreader/MainActivity.java
           test -s app/src/main/java/dev/chanwoo/rhodesreader/MainActivity.java
-          grep -q "class MainActivity" app/src/main/java/dev/chanwoo/rhodesreader/MainActivity.java
-          sha256sum app/src/main/java/dev/chanwoo/rhodesreader/MainActivity.java | tee v31-source.sha256
+          grep -q 'class MainActivity' app/src/main/java/dev/chanwoo/rhodesreader/MainActivity.java
+          sed -i 's/Rhodes Reader KR 3\.1\.0/Rhodes Reader KR 3.2.0/g; s/Rhodes Reader KR 3\.0\.0/Rhodes Reader KR 3.2.0/g' app/src/main/java/dev/chanwoo/rhodesreader/MainActivity.java
+          sha256sum app/src/main/java/dev/chanwoo/rhodesreader/MainActivity.java | tee v32-source.sha256
 
-      - name: Validate offline runtime and version
+      - name: Validate native offline runtime
         run: |
-          ! grep -R "android.permission.INTERNET" -n app/src/main/AndroidManifest.xml
-          ! grep -R "android.webkit.WebView" -n app/src/main/java
-          ! grep -R "https://\|http://" -n app/src/main/java/dev/chanwoo/rhodesreader/MainActivity.java
-          grep -q "versionName '3.1.0'" app/build.gradle
+          ! grep -R 'android.permission.INTERNET' -n app/src/main/AndroidManifest.xml
+          ! grep -R 'android.webkit.WebView' -n app/src/main/java
+          ! grep -R 'https://\|http://' -n app/src/main/java/dev/chanwoo/rhodesreader/MainActivity.java
+          grep -q "versionName '3.2.0'" app/build.gradle
 
       - name: Fetch latest Korean story data
         run: |
           git clone --depth=1 --filter=blob:none --sparse https://github.com/050644zf/ArknightsStoryJson.git upstream-story
           git -C upstream-story sparse-checkout set ko_KR/gamedata/story img/banners
 
-      - name: Index fexli images
-        run: git clone --depth=1 --filter=blob:none --no-checkout https://github.com/fexli/ArknightsResource.git upstream-images
+      - name: Fetch Korean story variables
+        run: |
+          git clone --depth=1 --filter=blob:none --sparse https://github.com/ArknightsAssets/ArknightsGamedata.git upstream-gamedata
+          git -C upstream-gamedata sparse-checkout set kr/gamedata/story/story_variables.json
+          test -s upstream-gamedata/kr/gamedata/story/story_variables.json
 
-      - name: Index baseline audio
-        run: git clone --depth=1 --filter=blob:none --no-checkout --branch global-server-voices https://github.com/PseudoMon/arknights-audio.git upstream-audio
+      - name: Index baseline images and audio
+        run: |
+          git clone --depth=1 --filter=blob:none --no-checkout https://github.com/fexli/ArknightsResource.git upstream-images
+          git clone --depth=1 --filter=blob:none --no-checkout --branch global-server-voices https://github.com/PseudoMon/arknights-audio.git upstream-audio
 
-      - name: Build v3 baseline media pack
+      - name: Build baseline media pack
         run: |
           python3 scripts/prepare_full_assets.py upstream-story upstream-images upstream-audio | tee full-media-report.txt
           du -sh app/src/main/assets
 
-      - name: Index supplemental Aceship images
-        run: git clone --depth=1 --filter=blob:none --no-checkout https://github.com/Aceship/Arknight-Images.git upstream-aceship
+      - name: Index supplemental image sources
+        run: |
+          git clone --depth=1 --filter=blob:none --no-checkout https://github.com/Aceship/Arknight-Images.git upstream-aceship
+          git clone --depth=1 --filter=blob:none --no-checkout --branch cn https://github.com/ArknightsAssets/ArknightsAssets2.git upstream-assets2
+          git clone --depth=1 --filter=blob:none --no-checkout --branch main https://github.com/PseudoMon/arknights-audio.git upstream-audio-main
 
-      - name: Index supplemental ArknightsAssets2 CN images
-        run: git clone --depth=1 --filter=blob:none --no-checkout --branch cn https://github.com/ArknightsAssets/ArknightsAssets2.git upstream-assets2
-
-      - name: Index complete PseudoMon audio main
-        run: git clone --depth=1 --filter=blob:none --no-checkout --branch main https://github.com/PseudoMon/arknights-audio.git upstream-audio-main
-
-      - name: Supplement every resolvable media key
+      - name: Supplement public media sources
         run: |
           python3 scripts/supplement_media_v31.py upstream-images upstream-aceship upstream-assets2 upstream-audio-main | tee supplement-v31-report.txt
+          du -sh app/src/main/assets
+
+      - name: Install current bundle extractor
+        run: python3 -m pip install --quiet UnityPy lz4
+
+      - name: Extract current KR official story audio
+        run: |
+          python3 scripts/supplement_official_audio_v32.py app/src/main/assets/story upstream-gamedata/kr/gamedata/story/story_variables.json | tee official-audio-v32-report.txt
+
+      - name: Index historical assets for removed collaboration media
+        run: git clone --filter=blob:none --no-checkout https://github.com/ArknightsAssets/ArknightsAssets2.git upstream-assets2-history
+
+      - name: Finalize and require 100 percent media coverage
+        run: |
+          python3 scripts/finalize_media_v32.py upstream-assets2 upstream-assets2-history v32-official-audio-report.json | tee finalize-v32-report.txt
           python3 - <<'PY'
           import json
           s=json.load(open('app/src/main/assets/media_index.json',encoding='utf-8'))['stats']
-          print(json.dumps({k:v for k,v in s.items() if k.startswith('v31_')},ensure_ascii=False,indent=2))
-          assert s['v31_backgroundFound'] == s['v31_backgroundRequested']
-          assert s['v31_imageFound'] >= 1326
-          assert s['v31_characterFound'] >= 7900
+          for k in ('background','image','character','music','sfx'):
+              a=s[f'v32_{k}Found']; b=s[f'v32_{k}Requested']
+              print(k,a,'/',b)
+              assert a==b,(k,a,b)
           PY
           du -sh app/src/main/assets
 
       - name: Prepare media optimization tools
         run: |
-          python3 -c 'import PIL' || python3 -m pip install --user pillow
+          python3 -c 'import PIL' || python3 -m pip install --quiet pillow
           if ! command -v ffmpeg >/dev/null 2>&1; then
             sudo apt-get update -qq
             sudo apt-get install -y -qq ffmpeg
           fi
-          ffmpeg -version | head -1
 
       - name: Optimize media for single APK
         run: |
@@ -85,10 +102,13 @@ jobs:
           python3 - <<'PY'
           import json
           s=json.load(open('app/src/main/assets/media_index.json',encoding='utf-8'))['stats']
-          print('optimized bytes',s['totalAssetBytesAfterOptimization'])
           assert s['optimizedForApk'] is True
           assert s['totalAssetBytesAfterOptimization'] < 3_600_000_000
           assert len(s.get('audioOptimizationErrors', [])) == 0
+          assert len(s.get('imageOptimizationErrors', [])) == 0
+          for k in ('background','image','character','music','sfx'):
+              assert s[f'v32_{k}Found']==s[f'v32_{k}Requested']
+          print('optimized bytes',s['totalAssetBytesAfterOptimization'])
           PY
           du -sh app/src/main/assets
 
@@ -102,62 +122,40 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install Android SDK packages
-        run: yes | sdkmanager "platforms;android-36" "build-tools;36.0.0"
+        run: yes | sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
 
       - name: Set up Gradle 9.6
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.6.0'
 
-      - name: Build v3.1 APK
+      - name: Build v3.2 APK
         run: gradle --no-daemon :app:assembleDebug
 
-      - name: Stage and verify APK
+      - name: Stage and verify final APK
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk RhodesReaderKR-v3.1.0-max-media-offline.apk
-          unzip -l RhodesReaderKR-v3.1.0-max-media-offline.apk | grep -q "assets/story_index.json"
-          unzip -l RhodesReaderKR-v3.1.0-max-media-offline.apk | grep -q "assets/media_index.json"
-          unzip -l RhodesReaderKR-v3.1.0-max-media-offline.apk | grep -q "assets/story/"
-          unzip -l RhodesReaderKR-v3.1.0-max-media-offline.apk | grep -q "assets/media/images/"
-          unzip -l RhodesReaderKR-v3.1.0-max-media-offline.apk | grep -q "assets/media/audio/"
-          sha256sum RhodesReaderKR-v3.1.0-max-media-offline.apk | tee RhodesReaderKR-v3.1.0-max-media-offline.apk.sha256
-          ls -lh RhodesReaderKR-v3.1.0-max-media-offline.apk
+          cp app/build/outputs/apk/debug/app-debug.apk RhodesReaderKR-v3.2.0-final-private-offline.apk
+          unzip -l RhodesReaderKR-v3.2.0-final-private-offline.apk | grep -q 'assets/story_index.json'
+          unzip -l RhodesReaderKR-v3.2.0-final-private-offline.apk | grep -q 'assets/media_index.json'
+          unzip -l RhodesReaderKR-v3.2.0-final-private-offline.apk | grep -q 'assets/media/images/'
+          unzip -l RhodesReaderKR-v3.2.0-final-private-offline.apk | grep -q 'assets/media/audio/'
+          sha256sum RhodesReaderKR-v3.2.0-final-private-offline.apk | tee RhodesReaderKR-v3.2.0-final-private-offline.apk.sha256
+          ls -lh RhodesReaderKR-v3.2.0-final-private-offline.apk
 
-      - name: Upload v3.1 APK artifact
+      - name: Upload final private APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RhodesReaderKR-v3.1.0-max-media-offline
+          name: RhodesReaderKR-v3.2.0-final-private-offline
           path: |
-            RhodesReaderKR-v3.1.0-max-media-offline.apk
-            RhodesReaderKR-v3.1.0-max-media-offline.apk.sha256
+            RhodesReaderKR-v3.2.0-final-private-offline.apk
+            RhodesReaderKR-v3.2.0-final-private-offline.apk.sha256
+            app/src/main/assets/media_index.json
             full-media-report.txt
             supplement-v31-report.txt
+            official-audio-v32-report.txt
+            v32-official-audio-report.json
+            finalize-v32-report.txt
             optimize-media-report.txt
-            app/src/main/assets/media_index.json
-            v31-source.sha256
+            v32-source.sha256
           compression-level: 0
           retention-days: 30
-
-      - name: Publish v3.1.0 release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v3.1.0
-          name: Rhodes Reader KR v3.1.0
-          target_commitish: v3.1-release
-          make_latest: true
-          body: |
-            Rhodes Reader KR v3.1.0 Max Media Offline
-
-            한국어 스토리 1,895편과 공개 소스에서 실제로 해석 가능한 스토리 이미지/오디오를 오프라인으로 포함합니다.
-
-            검증 기준:
-            - 배경: 882/882
-            - 일반 스토리 이미지: 1326/1328
-            - 캐릭터 스프라이트: 9021/9225
-            - BGM: 210/449
-            - SFX: 664/1394
-
-            공개 자산 저장소에 실제 파일이 없는 항목은 다른 자산으로 잘못 대체하지 않았습니다.
-          files: |
-            RhodesReaderKR-v3.1.0-max-media-offline.apk
-            RhodesReaderKR-v3.1.0-max-media-offline.apk.sha256
