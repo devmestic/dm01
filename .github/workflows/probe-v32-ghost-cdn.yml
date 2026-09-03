@@ -1,0 +1,60 @@
+name: Probe v3.2 unlisted legacy CDN bundles
+
+on:
+  push:
+    branches: ["v3.2-official-audio"]
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe guessed legacy dat paths
+        run: |
+          python3 - <<'PY' | tee v32-ghost-cdn.txt
+          import json, urllib.request, urllib.error
+          configs={
+            'kr':'https://ak-conf.arknights.kr/config/prod/official/network_config',
+            'en':'https://ak-conf.arknights.global/config/prod/official/network_config',
+            'jp':'https://ak-conf.arknights.jp/config/prod/official/network_config',
+            'tw':'https://ak-conf-tw.gryphline.com/config/prod/official/network_config',
+            'cn':'https://ak-conf.hypergryph.com/config/prod/official/network_config',
+          }
+          guesses=[
+            'audio_custom_se_act24side.dat',
+            'audio_custom_se_act24side__retro.dat',
+            'audio_sound_beta_2_custom_se_act24side.dat',
+            'audio_sound_beta_2_custom_se_act24side__retro.dat',
+            'audio_sound_beta_2_music_act24side_m_avg_act24side.dat',
+            'audio_sound_beta_2_music_act24side_m_bat_mhrors.dat',
+            'audio_sound_beta_2_music_act24side_m_sys_act24side.dat',
+            'audio_sound_beta_2_music_act24side__retro_m_avg_act24side.dat',
+            'audio_sound_beta_2_music_act24side__retro_m_bat_mhrors.dat',
+            'audio_sound_beta_2_music_act24side__retro_m_sys_act24side.dat',
+          ]
+          def gj(u):
+            q=urllib.request.Request(u,headers={'User-Agent':'RhodesReaderKR-v3.2-ghost'})
+            with urllib.request.urlopen(q,timeout=60) as r:return json.load(r)
+          for s,cfg in configs.items():
+            try:
+              outer=gj(cfg); c=json.loads(outer['content']); n=c['configs'][c['funcVer']]['network']; v=gj(n['hv'].replace('{0}','Android'))
+              base=f"{n['hu']}/Android/assets/{v['resVersion']}"
+              print('\nSERVER',s,'BASE',base)
+              for g in guesses:
+                url=base+'/'+g
+                req=urllib.request.Request(url,method='GET',headers={'User-Agent':'RhodesReaderKR-v3.2-ghost','Range':'bytes=0-0'})
+                try:
+                  with urllib.request.urlopen(req,timeout=30) as r:
+                    print('HIT',r.status,g,'len',r.headers.get('Content-Length'),'range',r.headers.get('Content-Range'))
+                except urllib.error.HTTPError as e:
+                  if e.code not in (403,404): print('HTTP',e.code,g)
+                except Exception as e: print('ERR',g,repr(e))
+            except Exception as e: print('SERVER_ERR',s,repr(e))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v32-ghost-cdn-probe
+          path: v32-ghost-cdn.txt
+          retention-days: 7
