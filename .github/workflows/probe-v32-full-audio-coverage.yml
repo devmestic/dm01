@@ -1,0 +1,49 @@
+name: Probe v3.2 full KR audio coverage
+
+on:
+  push:
+    branches: ["v3.2-official-audio"]
+  workflow_dispatch:
+
+jobs:
+  coverage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch latest Korean story data
+        run: |
+          git clone --depth=1 --filter=blob:none --sparse https://github.com/050644zf/ArknightsStoryJson.git upstream-story
+          git -C upstream-story sparse-checkout set ko_KR/gamedata/story
+
+      - name: Prepare minimal media index
+        run: |
+          mkdir -p app/src/main/assets/media/audio
+          printf '%s' '{"images":{"background":{},"image":{},"character":{}},"audio":{"music":{},"sfx":{}},"banners":{},"stats":{}}' > app/src/main/assets/media_index.json
+
+      - name: Install current bundle extraction dependencies
+        run: python3 -m pip install --index-url https://pypi.org/simple 'UnityPy~=1.25' 'lz4~=4.4'
+
+      - name: Resolve and extract every story-referenced official audio clip
+        run: |
+          python3 scripts/supplement_official_audio_v32.py \
+            upstream-story/ko_KR/gamedata/story \
+            upstream-story/ko_KR/gamedata/story/story_variables.json \
+            | tee v32-full-audio-coverage.txt
+          python3 - <<'PY'
+          import json
+          d=json.load(open('v32-official-audio-report.json',encoding='utf-8'))
+          print(json.dumps(d['stats'],ensure_ascii=False,indent=2))
+          print('music missing',len(d['missing']['music']))
+          print('sfx missing',len(d['missing']['sfx']))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v32-full-audio-coverage
+          path: |
+            v32-full-audio-coverage.txt
+            v32-official-audio-report.json
+            app/src/main/assets/media_index.json
+          retention-days: 7
