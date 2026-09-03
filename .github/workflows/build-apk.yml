@@ -2,109 +2,12 @@ name: Build Full Offline Android APK
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ "main" ]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build:
+  paused:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
     steps:
-      - name: Checkout app
-        uses: actions/checkout@v4
-
-      - name: Materialize v3 native reader source
-        id: materialize
-        shell: bash
-        run: |
-          if [ -f scripts/MainActivity.java.gz.b64 ]; then
-            base64 -d scripts/MainActivity.java.gz.b64 | gzip -d > app/src/main/java/dev/chanwoo/rhodesreader/MainActivity.java
-            rm scripts/MainActivity.java.gz.b64
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add app/src/main/java/dev/chanwoo/rhodesreader/MainActivity.java scripts/MainActivity.java.gz.b64
-            git commit -m "Materialize v3 full-media native reader"
-            git push
-            echo "source_materialized=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "source_materialized=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Validate runtime remains offline
-        run: |
-          ! grep -R "android.permission.INTERNET" -n app/src/main/AndroidManifest.xml
-          ! grep -R "import android.webkit.WebView" -n app/src/main/java
-          grep -q "versionName '3.0.0'" app/build.gradle
-
-      - name: Fetch latest Korean story data
-        run: |
-          git clone --depth=1 --filter=blob:none --sparse https://github.com/050644zf/ArknightsStoryJson.git upstream-story
-          git -C upstream-story sparse-checkout set ko_KR/gamedata/story img/banners
-
-      - name: Index story image repository without blobs
-        run: |
-          git clone --depth=1 --filter=blob:none --no-checkout https://github.com/fexli/ArknightsResource.git upstream-images
-
-      - name: Index story audio repository without blobs
-        run: |
-          git clone --depth=1 --filter=blob:none --no-checkout --branch global-server-voices https://github.com/PseudoMon/arknights-audio.git upstream-audio
-
-      - name: Build selective full local media pack
-        run: |
-          python3 scripts/prepare_full_assets.py upstream-story upstream-images upstream-audio | tee full-media-report.txt
-          echo "---- media stats ----"
-          python3 - <<'PY'
-          import json
-          p='app/src/main/assets/media_index.json'
-          d=json.load(open(p, encoding='utf-8'))
-          print(json.dumps(d['stats'], ensure_ascii=False, indent=2))
-          PY
-          du -sh app/src/main/assets
-          test -s app/src/main/assets/story_index.json
-          test -s app/src/main/assets/media_index.json
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
-        run: yes | sdkmanager "platforms;android-36" "build-tools;36.0.0"
-
-      - name: Set up Gradle 9.6
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '9.6.0'
-
-      - name: Build v3 full offline APK
-        run: gradle --no-daemon :app:assembleDebug
-
-      - name: Stage and verify APK
-        run: |
-          cp app/build/outputs/apk/debug/app-debug.apk RhodesReaderKR-v3.0.0-full-offline.apk
-          unzip -l RhodesReaderKR-v3.0.0-full-offline.apk | grep -q "assets/story_index.json"
-          unzip -l RhodesReaderKR-v3.0.0-full-offline.apk | grep -q "assets/media_index.json"
-          unzip -l RhodesReaderKR-v3.0.0-full-offline.apk | grep -q "assets/story/"
-          unzip -l RhodesReaderKR-v3.0.0-full-offline.apk | grep -q "assets/media/images/"
-          unzip -l RhodesReaderKR-v3.0.0-full-offline.apk | grep -q "assets/media/audio/"
-          sha256sum RhodesReaderKR-v3.0.0-full-offline.apk | tee RhodesReaderKR-v3.0.0-full-offline.apk.sha256
-          ls -lh RhodesReaderKR-v3.0.0-full-offline.apk
-
-      - name: Upload personal full-media artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: RhodesReaderKR-v3.0.0-full-offline
-          path: |
-            RhodesReaderKR-v3.0.0-full-offline.apk
-            RhodesReaderKR-v3.0.0-full-offline.apk.sha256
-            full-media-report.txt
-            app/src/main/assets/media_index.json
-          compression-level: 0
-          retention-days: 30
+      - run: echo "v3 source chunks are being staged"
