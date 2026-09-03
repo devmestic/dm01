@@ -1,0 +1,30 @@
+name: Probe legacy ArknightsAssets audio
+
+on:
+  push:
+    branches: [ "v3.1-coverage" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch Korean stories
+        run: |
+          git clone --depth=1 --filter=blob:none --sparse https://github.com/050644zf/ArknightsStoryJson.git story
+          git -C story sparse-checkout set ko_KR/gamedata/story
+      - name: Index legacy asset dump without blobs
+        run: git clone --depth=1 --filter=blob:none --no-checkout --branch cn https://github.com/ArknightsAssets/ArknightsAssets.git assets-old
+      - name: Probe media names
+        run: python3 scripts/probe_assets2.py story assets-old | tee legacy-assets-probe.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: legacy-assets-probe
+          path: |
+            assets2-probe.json
+            legacy-assets-probe.txt
