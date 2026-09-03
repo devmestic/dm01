@@ -369,7 +369,7 @@ public class MainActivity extends Activity {
             }
             if (prop.equals("predicate")) {
                 String refs = a.optString("references");
-                if (!refs.isEmpty()) out.add(ReaderLine.note("분기 · " + refs.replace(';', ' · ')));
+                if (!refs.isEmpty()) out.add(ReaderLine.note("분기 · " + refs.replace(";", " · ")));
                 continue;
             }
             if (prop.equals("comment")) {
