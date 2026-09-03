@@ -3,6 +3,7 @@ name: Build v3.2 Private Maximum Offline APK
 on:
   push:
     branches: ["v3.2-build-private"]
+    paths: ["V32_PRIVATE_BUILD_TRIGGER"]
   workflow_dispatch:
 
 permissions:
@@ -70,7 +71,7 @@ jobs:
       - name: Fetch latest KR story variables
         run: |
           git clone --depth=1 --filter=blob:none --sparse https://github.com/ArknightsAssets/ArknightsGamedata.git upstream-gamedata
-          git -C upstream-gamedata sparse-checkout set kr/gamedata/story/story_variables.json
+          git -C upstream-gamedata sparse-checkout set kr/gamedata/story
           cp upstream-gamedata/kr/gamedata/story/story_variables.json story_variables_kr.json
           test -s story_variables_kr.json
 
@@ -91,8 +92,7 @@ jobs:
           PY
 
       - name: Recover aliases and surviving official CN Monster Hunter BGM
-        run: |
-          python3 scripts/supplement_legacy_audio_v32.py | tee legacy-audio-v32-report.txt
+        run: python3 scripts/supplement_legacy_audio_v32.py | tee legacy-audio-v32-report.txt
 
       - name: Calculate final coverage
         run: |
@@ -101,20 +101,8 @@ jobs:
           from pathlib import Path
           media=json.load(open('app/src/main/assets/media_index.json',encoding='utf-8'))
           stats=media.get('stats',{})
-          requested={
-            'background':stats.get('v31_backgroundRequested',0),
-            'image':stats.get('v31_imageRequested',0),
-            'character':stats.get('v31_characterRequested',0),
-            'music':stats.get('v32_musicRequested',0),
-            'sfx':stats.get('v32_sfxRequested',0),
-          }
-          found={
-            'background':sum(bool(v) for v in media.get('images',{}).get('background',{}).values()),
-            'image':sum(bool(v) for v in media.get('images',{}).get('image',{}).values()),
-            'character':sum(bool(v) for v in media.get('images',{}).get('character',{}).values()),
-            'music':sum(bool(v) for v in media.get('audio',{}).get('music',{}).values()),
-            'sfx':sum(bool(v) for v in media.get('audio',{}).get('sfx',{}).values()),
-          }
+          requested={'background':stats.get('v31_backgroundRequested',0),'image':stats.get('v31_imageRequested',0),'character':stats.get('v31_characterRequested',0),'music':stats.get('v32_musicRequested',0),'sfx':stats.get('v32_sfxRequested',0)}
+          found={'background':sum(bool(v) for v in media.get('images',{}).get('background',{}).values()),'image':sum(bool(v) for v in media.get('images',{}).get('image',{}).values()),'character':sum(bool(v) for v in media.get('images',{}).get('character',{}).values()),'music':sum(bool(v) for v in media.get('audio',{}).get('music',{}).values()),'sfx':sum(bool(v) for v in media.get('audio',{}).get('sfx',{}).values())}
           out={'requested':requested,'found':found,'missing':{k:max(0,requested[k]-found[k]) for k in requested}}
           Path('v32-final-coverage.json').write_text(json.dumps(out,ensure_ascii=False,indent=2),encoding='utf-8')
           print(json.dumps(out,ensure_ascii=False,indent=2))
