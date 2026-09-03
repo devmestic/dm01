@@ -12,10 +12,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Fetch latest Korean story data
+      - name: Fetch latest Korean story data and variable map
         run: |
           git clone --depth=1 --filter=blob:none --sparse https://github.com/050644zf/ArknightsStoryJson.git upstream-story
           git -C upstream-story sparse-checkout set ko_KR/gamedata/story
+          curl -L --fail --retry 3 -o story_variables.json \
+            https://raw.githubusercontent.com/ArknightsAssets/ArknightsGamedata/master/kr/gamedata/story/story_variables.json
+          test -s story_variables.json
 
       - name: Prepare minimal media index
         run: |
@@ -29,7 +32,7 @@ jobs:
         run: |
           python3 scripts/supplement_official_audio_v32.py \
             upstream-story/ko_KR/gamedata/story \
-            upstream-story/ko_KR/gamedata/story/story_variables.json \
+            story_variables.json \
             | tee v32-full-audio-coverage.txt
           python3 - <<'PY'
           import json
