@@ -43,13 +43,16 @@ jobs:
           print('resVersion',res)
           PY
 
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '6.0.x'
+
       - name: Install ArknightsStudioCLI
         shell: bash
         run: |
           curl -L --fail --retry 3 -o cli.zip https://raw.githubusercontent.com/ArknightsAssets/NewAssets/main/ArknightsStudioCLI/ArknightsStudioCLI-net6-linux64.v1.1.5.zip
           mkdir cli
           unzip -q cli.zip -d cli
-          find cli -maxdepth 2 -type f | head -50
           chmod +x cli/ArknightsStudioCLI
 
       - name: Extract sample AudioClips
@@ -58,7 +61,7 @@ jobs:
           mkdir extracted
           while IFS= read -r -d '' f; do
             echo "EXTRACT $f"
-            cli/ArknightsStudioCLI "$f" -g containerFull -t audio -o extracted || true
+            cli/ArknightsStudioCLI "$f" -g containerFull -t audio -o extracted
           done < <(find samples/unpacked -type f -name '*.ab' -print0)
           echo '=== EXTRACTED FILES ==='
           find extracted -type f -printf '%P\t%s\n' | sort | tee v32-extracted-files.txt
