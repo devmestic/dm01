@@ -1,0 +1,38 @@
+name: Probe v3.2 historical Monster Hunter recovery
+
+on:
+  push:
+    branches: ["v3.2-build-private"]
+    paths: [".github/workflows/probe-v32-history-recover.yml", "HISTORY_RECOVERY_TRIGGER"]
+  workflow_dispatch:
+
+jobs:
+  recover:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare empty media index
+        run: |
+          mkdir -p app/src/main/assets/media/audio
+          printf '{"images":{},"audio":{"music":{},"sfx":{}},"stats":{}}' > app/src/main/assets/media_index.json
+      - name: Recover historical Monster Hunter audio
+        run: python3 scripts/recover_historical_mh_audio_v32.py | tee v32-history-recover-probe.txt
+      - name: Verify 77 of 77
+        run: |
+          python3 - <<'PY'
+          import json
+          r=json.load(open('v32-historical-mh-audio-report.json',encoding='utf-8'))
+          print('music',len(r['recovered']['music']),'sfx',len(r['recovered']['sfx']))
+          assert len(r['recovered']['music']) == 8
+          assert len(r['recovered']['sfx']) == 69
+          assert not r['missing']['music']
+          assert not r['missing']['sfx']
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v32-history-recover-probe
+          path: |
+            v32-history-recover-probe.txt
+            v32-historical-mh-audio-report.json
+          retention-days: 7
