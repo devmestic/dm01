@@ -1,0 +1,93 @@
+name: Probe v3.2 missing character mappings
+
+on:
+  push:
+    branches: ["v3.2-finalize"]
+    paths: ['.github/workflows/probe-v32-missing-characters.yml']
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch trees and story
+        run: |
+          git clone --depth=1 --filter=blob:none --sparse https://github.com/050644zf/ArknightsStoryJson.git story
+          git -C story sparse-checkout set ko_KR/gamedata/story
+          git clone --depth=1 --filter=blob:none --no-checkout https://github.com/fexli/ArknightsResource.git fex
+          git clone --depth=1 --filter=blob:none --no-checkout https://github.com/Aceship/Arknight-Images.git ace
+          git clone --depth=1 --filter=blob:none --no-checkout --branch cn https://github.com/ArknightsAssets/ArknightsAssets2.git a2
+      - name: Analyze missing keys
+        run: |
+          python3 - <<'PY' | tee v32-missing-character-analysis.txt
+          import json,re,subprocess
+          from pathlib import Path
+          from collections import defaultdict,Counter
+          IMG={'.png','.jpg','.jpeg','.webp'}
+          def clean(v):
+              if v is None:return ''
+              v=str(v).strip().strip('"').strip("'")
+              if v.startswith('$'):v=v[1:]
+              return v.strip()
+          def norm(v):return re.sub(r'[^a-z0-9]+','',v.lower())
+          def variants(k): return list(dict.fromkeys([k,re.sub(r'[#\$]+','_',k)]))
+          def paths(repo,prefix=None):
+              c=['git','-C',repo,'ls-tree','-r','--name-only','HEAD']
+              if prefix:c+=['--',prefix]
+              return subprocess.check_output(c,text=True,errors='replace').splitlines()
+          def idx(ps):
+              ex=defaultdict(list); no=defaultdict(list)
+              for p in ps:
+                  q=Path(p)
+                  if q.suffix.lower() not in IMG:continue
+                  ex[q.stem.lower()].append(p); no[norm(q.stem)].append(p)
+              return ex,no
+          fex,fn=idx(paths('fex','avgs')); ace,an=idx(paths('ace','avg')); a2,a2n=idx(paths('a2'))
+          req=set()
+          for fp in Path('story/ko_KR/gamedata/story').rglob('*.json'):
+              try:d=json.load(open(fp,encoding='utf-8'))
+              except:continue
+              for line in d.get('storyList',[]):
+                  if not isinstance(line,dict):continue
+                  a=line.get('attributes') or {}
+                  if not isinstance(a,dict):a={}
+                  if str(line.get('prop') or '').lower()=='character':
+                      for fld in ('name','name2'):
+                          k=clean(a.get(fld))
+                          if k and 'focus=' not in k and not k.startswith(','):req.add(k)
+                  k=clean(line.get('figure_art'))
+                  if k and 'focus=' not in k:req.add(k)
+          def pick(k):
+              for v in variants(k):
+                  for ex in (a2,fex,ace):
+                      if ex.get(v.lower()):return True
+              nk=norm(k)
+              for no in (a2n,fn,an):
+                  if len(no.get(nk,[]))==1:return True
+              return False
+          missing=sorted(k for k in req if not pick(k))
+          # Four known final aliases/fallbacks are already handled by finalizer.
+          known={'avg_npc_602_1#1$1','avg_npc_764_1#1$1','avg_npc_765_1#1$1','char_242_mayer'}
+          missing=[k for k in missing if k not in known]
+          print('REQUESTED',len(req),'RAW MISSING AFTER KNOWN',len(missing))
+          print('PATTERNS',Counter(('hash' if '#' in k else 'nohash', 'dollar' if '$' in k else 'nodollar') for k in missing))
+          all_a2=paths('a2')
+          for k in missing:
+              # derive likely base bundle stem and show compact nearby candidates
+              base=re.split(r'[#\$]',k)[0]
+              expr=''; layer=''
+              m=re.match(r'^(.*?)(?:#([^$]+))?(?:\$(.+))?$',k)
+              if m: base,expr,layer=m.group(1),m.group(2) or '',m.group(3) or ''
+              cand=[p for p in all_a2 if base.lower() in Path(p).stem.lower() and Path(p).suffix.lower() in IMG]
+              # prioritize avg paths / same base
+              cand=sorted(cand,key=lambda p:(0 if '/avg/' in '/'+p.lower() else 1,len(p)))[:12]
+              print('MISS',repr(k),'BASE',repr(base),'EXPR',repr(expr),'LAYER',repr(layer))
+              for p in cand: print('  CAND',p)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v32-missing-character-analysis
+          path: v32-missing-character-analysis.txt
+          retention-days: 7
