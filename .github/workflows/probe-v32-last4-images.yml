@@ -1,0 +1,86 @@
+name: Probe v3.2 final four image assets
+
+on:
+  push:
+    branches: ["v3.2-finalize"]
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install extractor dependencies
+        run: python3 -m pip install --quiet UnityPy lz4
+      - name: Probe KR bundles and asset history
+        run: |
+          python3 - <<'PY' | tee v32-last4-images.txt
+          import io,json,re,tempfile,urllib.request,zipfile,subprocess,os,shutil
+          from pathlib import Path
+          import lz4.block, UnityPy
+          from UnityPy.enums.BundleFile import CompressionFlags
+          from UnityPy.helpers import CompressionHelper
+
+          def extra(data,pos,end):
+              n=0
+              while pos<end:
+                  b=data[pos]; n+=b; pos+=1
+                  if b!=0xff: break
+              return n,pos
+          def lz4ak(src,usize):
+              ip=op=0; buf=bytearray(src); end=len(buf)
+              while ip<end:
+                  lit=buf[ip]&15; mat=(buf[ip]>>4)&15; buf[ip]=(lit<<4)|mat; ip+=1
+                  if lit==15:
+                      x,ip=extra(buf,ip,end); lit+=x
+                  ip+=lit; op+=lit
+                  if op>=usize: break
+                  off=(buf[ip]<<8)|buf[ip+1]; buf[ip]=off&255; buf[ip+1]=(off>>8)&255; ip+=2
+                  if mat==15:
+                      x,ip=extra(buf,ip,end); mat+=x
+                  mat+=4; op+=mat
+              return lz4.block.decompress(buf,uncompressed_size=usize)
+          CompressionHelper.DECOMPRESSION_MAP[CompressionFlags.LZHAM]=lz4ak
+          def gj(url):
+              req=urllib.request.Request(url,headers={'User-Agent':'RhodesReaderKR-v3.2-finalize'})
+              with urllib.request.urlopen(req,timeout=90) as r:return json.load(r)
+          outer=gj('https://ak-conf.arknights.kr/config/prod/official/network_config')
+          conf=json.loads(outer['content']); network=conf['configs'][conf['funcVer']]['network']
+          ver=gj(network['hv'].replace('{0}','Android')); rv=ver['resVersion']; base=f"{network['hu']}/Android/assets/{rv}"
+          hot=gj(base+'/hot_update_list.json'); infos=hot['abInfos']
+          needles=['242_mayer','npc_602_1','npc_764_1','npc_765_1']
+          hits=[x['name'] for x in infos if any(n in str(x.get('name','')).lower() for n in needles)]
+          print('RESVERSION',rv)
+          print('HITS',len(hits))
+          for x in hits: print('BUNDLE',x)
+          def datname(n): return n.replace('/','_').replace('#','__').rsplit('.',1)[0]+'.dat'
+          with tempfile.TemporaryDirectory() as td:
+              td=Path(td)
+              for name in hits:
+                  try:
+                      req=urllib.request.Request(base+'/'+datname(name),headers={'User-Agent':'RhodesReaderKR-v3.2-finalize'})
+                      raw=urllib.request.urlopen(req,timeout=120).read()
+                      with zipfile.ZipFile(io.BytesIO(raw)) as z:z.extractall(td/'u')
+                      for ab in (td/'u').rglob('*.ab'):
+                          env=UnityPy.load(str(ab)); print('OPEN',name,'objects',len(env.objects))
+                          for obj in env.objects:
+                              if obj.type.name in ('Sprite','Texture2D'):
+                                  try:o=obj.parse_as_object(); nm=str(getattr(o,'m_Name','') or '')
+                                  except Exception as e: continue
+                                  print(obj.type.name,repr(nm))
+                      shutil.rmtree(td/'u',ignore_errors=True)
+                  except Exception as e: print('ERR',name,repr(e))
+
+          # Search current + deleted paths in Assets2 history for exact four keys.
+          subprocess.run(['git','clone','--filter=blob:none','--no-checkout','https://github.com/ArknightsAssets/ArknightsAssets2.git','assets2'],check=True)
+          out=subprocess.check_output(['git','-C','assets2','log','--all','--name-only','--pretty=format:'],text=True,errors='replace')
+          for needle in ['char_242_mayer','avg_npc_602_1','avg_npc_764_1','avg_npc_765_1']:
+              print('HISTORY',needle)
+              for p in sorted({p for p in out.splitlines() if needle in p.lower()}): print(p)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v32-last4-images-probe
+          path: v32-last4-images.txt
+          retention-days: 7
