@@ -1,0 +1,70 @@
+name: Publish Existing v3 APK
+
+on:
+  push:
+    branches: [ "v3-publish" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download successful APK artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p downloaded
+          gh run download 33763257274 \
+            --repo devmestic/dm01 \
+            --name RhodesReaderKR-v3.0.0-full-offline \
+            --dir downloaded
+          find downloaded -maxdepth 3 -type f -printf '%p %s bytes\n'
+
+      - name: Verify APK and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find downloaded -type f -name 'RhodesReaderKR-v3.0.0-full-offline.apk' -print -quit)"
+          SHA_FILE="$(find downloaded -type f -name 'RhodesReaderKR-v3.0.0-full-offline.apk.sha256' -print -quit)"
+          test -n "$APK" && test -s "$APK"
+          test -n "$SHA_FILE" && test -s "$SHA_FILE"
+          EXPECTED="$(awk '{print $1}' "$SHA_FILE")"
+          ACTUAL="$(sha256sum "$APK" | awk '{print $1}')"
+          echo "expected=$EXPECTED"
+          echo "actual=$ACTUAL"
+          test "$EXPECTED" = "$ACTUAL"
+          cp "$APK" ./RhodesReaderKR-v3.0.0-full-offline.apk
+          printf '%s  %s\n' "$ACTUAL" 'RhodesReaderKR-v3.0.0-full-offline.apk' > ./RhodesReaderKR-v3.0.0-full-offline.apk.sha256
+          ls -lh ./RhodesReaderKR-v3.0.0-full-offline.apk
+
+      - name: Create GitHub Release and upload APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v3.0.0-full-offline"
+          if ! gh release view "$TAG" --repo devmestic/dm01 >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --repo devmestic/dm01 \
+              --target 6066404bf3555b5117acf4d89de490156446dac9 \
+              --title "Rhodes Reader KR v3.0.0 Full Offline" \
+              --notes "Native offline Android build. Includes 1,895 Korean story JSON files and the successfully packaged story-referenced media set. No WebView and no INTERNET permission."
+          fi
+          gh release upload "$TAG" \
+            ./RhodesReaderKR-v3.0.0-full-offline.apk \
+            ./RhodesReaderKR-v3.0.0-full-offline.apk.sha256 \
+            --repo devmestic/dm01 \
+            --clobber
+
+      - name: Verify public release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view v3.0.0-full-offline --repo devmestic/dm01 --json url,assets
