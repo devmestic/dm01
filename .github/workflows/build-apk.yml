@@ -11,7 +11,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - name: Checkout app
         uses: actions/checkout@v4
@@ -52,7 +52,7 @@ jobs:
       - name: Build selective full local media pack
         run: |
           python3 scripts/prepare_full_assets.py upstream-story upstream-images upstream-audio | tee full-media-report.txt
-          echo "---- media stats ----"
+          echo "---- media stats before optimization ----"
           python3 - <<'PY'
           import json
           d=json.load(open('app/src/main/assets/media_index.json', encoding='utf-8'))
@@ -60,6 +60,25 @@ jobs:
           stats=d['stats']
           assert stats['storyCount'] >= 1800
           assert stats['backgroundFound'] + stats['imageFound'] + stats['characterFound'] > 0
+          PY
+          du -sh app/src/main/assets
+
+      - name: Prepare media optimization tools
+        run: |
+          python3 -c 'import PIL' || python3 -m pip install --user pillow
+          ffmpeg -version | head -1
+
+      - name: Optimize media for single APK
+        run: |
+          python3 scripts/optimize_media_pack.py | tee optimize-media-report.txt
+          echo "---- media stats after optimization ----"
+          python3 - <<'PY'
+          import json
+          d=json.load(open('app/src/main/assets/media_index.json', encoding='utf-8'))
+          s=d['stats']
+          print(json.dumps({k:v for k,v in s.items() if 'Bytes' in k or 'Encoding' in k or 'optimized' in k or 'Optimization' in k}, ensure_ascii=False, indent=2))
+          assert s['optimizedForApk'] is True
+          assert s['totalAssetBytesAfterOptimization'] < 3_600_000_000
           PY
           du -sh app/src/main/assets
           test -s app/src/main/assets/story_index.json
@@ -103,6 +122,7 @@ jobs:
             RhodesReaderKR-v3.0.0-full-offline.apk
             RhodesReaderKR-v3.0.0-full-offline.apk.sha256
             full-media-report.txt
+            optimize-media-report.txt
             app/src/main/assets/media_index.json
             v3-source.sha256
           compression-level: 0
