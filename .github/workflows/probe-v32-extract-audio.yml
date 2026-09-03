@@ -8,7 +8,7 @@ on:
 jobs:
   extract:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -43,27 +43,67 @@ jobs:
           print('resVersion',res)
           PY
 
-      - name: Install Ark-Unpacker with current Arknights LZ4AK support
+      - name: Install minimal extraction dependencies
         shell: bash
         run: |
-          git clone --depth=1 --recurse-submodules --shallow-submodules --branch v5.x https://github.com/isHarryh/Ark-Unpacker.git ark-unpacker
-          python3 -m pip install --upgrade pip
-          python3 -m pip install --index-url https://pypi.org/simple \
-            'bson~=0.5' 'flatbuffers~=25.12' 'numpy~=2.2' 'Pillow~=11.3' \
-            'psutil~=7.2' 'pycryptodome~=3.22' 'pydub-ng~=0.1' 'rich~=15.0' \
-            'spine-asset~=1.1' 'UnityPy~=1.25' 'wannacri~=0.3'
-          command -v ffmpeg >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
-          python3 ark-unpacker/Main.py -h | head -80
+          python3 -m pip install --index-url https://pypi.org/simple 'UnityPy~=1.25' 'lz4~=4.4'
 
-      - name: Extract sample AudioClips
+      - name: Extract sample AudioClips with LZ4AK patch
         shell: bash
         run: |
-          rm -rf extracted
-          python3 ark-unpacker/Main.py -m ab -i samples/unpacked -o extracted -d --audio -l 3
-          echo '=== EXTRACTED FILES ==='
+          rm -rf extracted && mkdir extracted
+          python3 - <<'PY'
+          from pathlib import Path
+          import lz4.block
+          import UnityPy
+          from UnityPy.enums.BundleFile import CompressionFlags
+          from UnityPy.helpers import CompressionHelper
+
+          def extra(data,pos,end):
+              n=0
+              while pos<end:
+                  b=data[pos]; n+=b; pos+=1
+                  if b!=0xff: break
+              return n,pos
+
+          def lz4ak(src,usize):
+              ip=op=0; buf=bytearray(src); end=len(buf)
+              while ip<end:
+                  literal=buf[ip]&0xF; match=(buf[ip]>>4)&0xF
+                  buf[ip]=(literal<<4)|match; ip+=1
+                  if literal==0xF:
+                      x,ip=extra(buf,ip,end); literal+=x
+                  ip+=literal; op+=literal
+                  if op>=usize: break
+                  off=(buf[ip]<<8)|buf[ip+1]
+                  buf[ip]=off&0xff; buf[ip+1]=(off>>8)&0xff; ip+=2
+                  if match==0xF:
+                      x,ip=extra(buf,ip,end); match+=x
+                  match+=4; op+=match
+              return lz4.block.decompress(buf,uncompressed_size=usize)
+
+          CompressionHelper.DECOMPRESSION_MAP[CompressionFlags.LZHAM]=lz4ak
+          out=Path('extracted')
+          count=0
+          for fp in Path('samples/unpacked').rglob('*.ab'):
+              print('OPEN',fp)
+              env=UnityPy.load(str(fp))
+              for obj in env.objects:
+                  if obj.type.name!='AudioClip': continue
+                  clip=obj.parse_as_object()
+                  print('AUDIOCLIP',clip.m_Name)
+                  for name,data in clip.samples.items():
+                      safe=Path(name).name
+                      dest=out/safe
+                      if dest.exists():
+                          dest=out/(fp.stem+'__'+safe)
+                      dest.write_bytes(data)
+                      print('WRITE',dest,len(data))
+                      count+=1
+          print('TOTAL_EXTRACTED',count)
+          if count==0: raise SystemExit('no audio extracted')
+          PY
           find extracted -type f -printf '%P\t%s\n' | sort | tee v32-extracted-files.txt
-          test -s v32-extracted-files.txt
-          grep -Ei 'decisive|avg|\.wav|\.ogg|\.mp3' v32-extracted-files.txt | head -100 || true
 
       - uses: actions/upload-artifact@v4
         with:
