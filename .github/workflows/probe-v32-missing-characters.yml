@@ -9,7 +9,7 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Fetch trees and story
@@ -19,7 +19,7 @@ jobs:
           git clone --depth=1 --filter=blob:none --no-checkout https://github.com/fexli/ArknightsResource.git fex
           git clone --depth=1 --filter=blob:none --no-checkout https://github.com/Aceship/Arknight-Images.git ace
           git clone --depth=1 --filter=blob:none --no-checkout --branch cn https://github.com/ArknightsAssets/ArknightsAssets2.git a2
-      - name: Analyze missing keys
+      - name: Analyze missing keys quickly
         run: |
           python3 - <<'PY' | tee v32-missing-character-analysis.txt
           import json,re,subprocess
@@ -68,23 +68,30 @@ jobs:
                   if len(no.get(nk,[]))==1:return True
               return False
           missing=sorted(k for k in req if not pick(k))
-          # Four known final aliases/fallbacks are already handled by finalizer.
           known={'avg_npc_602_1#1$1','avg_npc_764_1#1$1','avg_npc_765_1#1$1','char_242_mayer'}
           missing=[k for k in missing if k not in known]
           print('REQUESTED',len(req),'RAW MISSING AFTER KNOWN',len(missing))
           print('PATTERNS',Counter(('hash' if '#' in k else 'nohash', 'dollar' if '$' in k else 'nodollar') for k in missing))
-          all_a2=paths('a2')
+          all_a2=[p for p in paths('a2') if Path(p).suffix.lower() in IMG]
+          baseidx=defaultdict(list)
+          for p in all_a2:
+              stem=Path(p).stem.lower()
+              # Index plausible AVG base names from file and parent directory.
+              tokens={re.split(r'[#\$]',stem)[0]}
+              parent=Path(p).parent.name.lower()
+              if parent:tokens.add(re.split(r'[#\$]',parent)[0])
+              for t in tokens:
+                  if t:baseidx[t].append(p)
+          bases=Counter()
           for k in missing:
-              # derive likely base bundle stem and show compact nearby candidates
-              base=re.split(r'[#\$]',k)[0]
-              expr=''; layer=''
               m=re.match(r'^(.*?)(?:#([^$]+))?(?:\$(.+))?$',k)
-              if m: base,expr,layer=m.group(1),m.group(2) or '',m.group(3) or ''
-              cand=[p for p in all_a2 if base.lower() in Path(p).stem.lower() and Path(p).suffix.lower() in IMG]
-              # prioritize avg paths / same base
-              cand=sorted(cand,key=lambda p:(0 if '/avg/' in '/'+p.lower() else 1,len(p)))[:12]
-              print('MISS',repr(k),'BASE',repr(base),'EXPR',repr(expr),'LAYER',repr(layer))
+              base,expr,layer=(m.group(1),m.group(2) or '',m.group(3) or '') if m else (re.split(r'[#\$]',k)[0],'','')
+              bases[base]+=1
+              cand=sorted(baseidx.get(base.lower(),[]),key=lambda p:(0 if '/avg/' in '/'+p.lower() else 1,len(p)))[:20]
+              print('MISS',repr(k),'BASE',repr(base),'EXPR',repr(expr),'LAYER',repr(layer),'CANDS',len(baseidx.get(base.lower(),[])))
               for p in cand: print('  CAND',p)
+          print('BASE COUNTS')
+          for b,n in bases.most_common(): print(n,b)
           PY
       - uses: actions/upload-artifact@v4
         with:
