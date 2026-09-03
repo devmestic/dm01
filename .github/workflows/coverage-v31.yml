@@ -1,0 +1,34 @@
+name: Check v3.1 Complete Media Coverage
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "v3.1-coverage" ]
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch Korean stories
+        run: |
+          git clone --depth=1 --filter=blob:none --sparse https://github.com/050644zf/ArknightsStoryJson.git story
+          git -C story sparse-checkout set ko_KR/gamedata/story
+      - name: Index current fexli images
+        run: git clone --depth=1 --filter=blob:none --no-checkout https://github.com/fexli/ArknightsResource.git fexli
+      - name: Index Aceship fallback images
+        run: git clone --depth=1 --filter=blob:none --no-checkout https://github.com/Aceship/Arknight-Images.git aceship
+      - name: Index complete audio main branch
+        run: git clone --depth=1 --filter=blob:none --no-checkout --branch main https://github.com/PseudoMon/arknights-audio.git audio
+      - name: Measure coverage
+        run: python3 scripts/coverage_v31.py story fexli aceship audio | tee coverage-v31.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-v31
+          path: |
+            coverage-v31.json
+            coverage-v31.txt
