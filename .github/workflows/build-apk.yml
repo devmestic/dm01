@@ -66,6 +66,10 @@ jobs:
       - name: Prepare media optimization tools
         run: |
           python3 -c 'import PIL' || python3 -m pip install --user pillow
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ffmpeg
+          fi
           ffmpeg -version | head -1
 
       - name: Optimize media for single APK
@@ -79,6 +83,7 @@ jobs:
           print(json.dumps({k:v for k,v in s.items() if 'Bytes' in k or 'Encoding' in k or 'optimized' in k or 'Optimization' in k}, ensure_ascii=False, indent=2))
           assert s['optimizedForApk'] is True
           assert s['totalAssetBytesAfterOptimization'] < 3_600_000_000
+          assert len(s.get('audioOptimizationErrors', [])) == 0
           PY
           du -sh app/src/main/assets
           test -s app/src/main/assets/story_index.json
@@ -111,6 +116,7 @@ jobs:
           unzip -l RhodesReaderKR-v3.0.0-full-offline.apk | grep -q "assets/media_index.json"
           unzip -l RhodesReaderKR-v3.0.0-full-offline.apk | grep -q "assets/story/"
           unzip -l RhodesReaderKR-v3.0.0-full-offline.apk | grep -q "assets/media/images/"
+          unzip -l RhodesReaderKR-v3.0.0-full-offline.apk | grep -q "assets/media/audio/"
           sha256sum RhodesReaderKR-v3.0.0-full-offline.apk | tee RhodesReaderKR-v3.0.0-full-offline.apk.sha256
           ls -lh RhodesReaderKR-v3.0.0-full-offline.apk
 
