@@ -1,0 +1,92 @@
+name: Probe v3.2 image history coverage
+
+on:
+  push:
+    branches: ["v3.2-build-private"]
+    paths: ["IMAGE_HISTORY_TRIGGER"]
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch story and image indexes
+        run: |
+          git clone --depth=1 --filter=blob:none --sparse https://github.com/050644zf/ArknightsStoryJson.git story
+          git -C story sparse-checkout set ko_KR/gamedata/story
+          git clone --depth=1 --filter=blob:none --no-checkout https://github.com/fexli/ArknightsResource.git fexli
+          git clone --depth=1 --filter=blob:none --no-checkout https://github.com/Aceship/Arknight-Images.git ace
+          git clone --depth=1 --filter=blob:none --no-checkout --branch cn https://github.com/ArknightsAssets/ArknightsAssets2.git a2current
+          git clone --filter=blob:none --no-checkout https://github.com/ArknightsAssets/ArknightsAssets2.git a2hist
+          git -C a2hist fetch origin '+refs/heads/*:refs/remotes/origin/*'
+      - name: Compare all requested AVG keys against current and historical names
+        run: |
+          python3 - <<'PY' | tee v32-image-history-probe.txt
+          import json,re,subprocess
+          from collections import defaultdict
+          from pathlib import Path
+          EX={'.png','.jpg','.jpeg','.webp'}
+          def clean(v):
+            if v is None:return ''
+            v=str(v).strip().strip('"').strip("'")
+            if v.startswith('$'):v=v[1:]
+            return v.strip()
+          def norm(v):return re.sub(r'[^a-z0-9]+','',v.lower())
+          def variants(k):return list(dict.fromkeys(x for x in (k,re.sub(r'[#\$]+','_',k),Path(k.replace('\\','/')).name) if x))
+          req={'background':set(),'image':set(),'character':set()}
+          for fp in Path('story/ko_KR/gamedata/story').rglob('*.json'):
+            try:d=json.load(open(fp,encoding='utf-8'))
+            except:continue
+            for line in d.get('storyList',[]):
+              if not isinstance(line,dict):continue
+              prop=str(line.get('prop') or '').lower();a=line.get('attributes') or {}
+              if not isinstance(a,dict):a={}
+              im=clean(a.get('image'))
+              if im:req['background' if prop in ('background','backgroundtween') else 'image'].add(im)
+              if prop=='character':
+                for f in ('name','name2'):
+                  k=clean(a.get(f))
+                  if k and 'focus=' not in k and not k.startswith(','):req['character'].add(k)
+              fig=clean(line.get('figure_art'))
+              if fig and 'focus=' not in fig:req['character'].add(fig)
+          def tree(repo,prefix=None):
+            cmd=['git','-C',repo,'ls-tree','-r','--name-only','HEAD']
+            if prefix:cmd+=['--',prefix]
+            return subprocess.check_output(cmd,text=True,errors='replace').splitlines()
+          current=[]
+          current+=tree('fexli','avgs');current+=tree('ace','avg');current+=tree('a2current')
+          hist=subprocess.check_output(['git','-C','a2hist','log','--all','--name-only','--pretty=format:','--','assets/dyn/avg'],text=True,errors='replace').splitlines()
+          def idx(paths):
+            exact=defaultdict(list);nor=defaultdict(list)
+            for p in paths:
+              if Path(p).suffix.lower() not in EX:continue
+              s=Path(p).stem;exact[s.lower()].append(p);nor[norm(s)].append(p)
+            return exact,nor
+          ce,cn=idx(current);he,hn=idx(hist)
+          out={'requested':{},'currentOrHistory':{},'missing':{}}
+          for kind,keys in req.items():
+            miss=[];found=0
+            for k in sorted(keys):
+              hit=False
+              for v in variants(k):
+                if ce.get(v.lower()) or he.get(v.lower()):hit=True;break
+              if not hit:
+                nc=cn.get(norm(k),[])+hn.get(norm(k),[])
+                if len(set(nc))==1:hit=True
+              if hit:found+=1
+              else:miss.append(k)
+            out['requested'][kind]=len(keys);out['currentOrHistory'][kind]=found;out['missing'][kind]=miss
+          print(json.dumps({k:v for k,v in out.items() if k!='missing'},ensure_ascii=False,indent=2))
+          for kind,miss in out['missing'].items():
+            print('MISSING',kind,len(miss));print('\n'.join(miss[:500]))
+          Path('v32-image-history-coverage.json').write_text(json.dumps(out,ensure_ascii=False,indent=2),encoding='utf-8')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v32-image-history-coverage
+          path: |
+            v32-image-history-probe.txt
+            v32-image-history-coverage.json
+          retention-days: 7
