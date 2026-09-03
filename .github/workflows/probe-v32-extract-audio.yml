@@ -46,14 +46,13 @@ jobs:
       - name: Install Ark-Unpacker with current Arknights LZ4AK support
         shell: bash
         run: |
-          git clone --depth=1 --branch v5.x https://github.com/isHarryh/Ark-Unpacker.git ark-unpacker
+          git clone --depth=1 --recurse-submodules --shallow-submodules --branch v5.x https://github.com/isHarryh/Ark-Unpacker.git ark-unpacker
           python3 -m pip install --upgrade pip
           python3 -m pip install --index-url https://pypi.org/simple \
             'bson~=0.5' 'flatbuffers~=25.12' 'numpy~=2.2' 'Pillow~=11.3' \
             'psutil~=7.2' 'pycryptodome~=3.22' 'pydub-ng~=0.1' 'rich~=15.0' \
             'spine-asset~=1.1' 'UnityPy~=1.25' 'wannacri~=0.3'
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg
+          command -v ffmpeg >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
           python3 ark-unpacker/Main.py -h | head -80
 
       - name: Extract sample AudioClips
