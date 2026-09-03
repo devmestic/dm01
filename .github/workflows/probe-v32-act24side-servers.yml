@@ -1,0 +1,49 @@
+name: Probe v3.2 Monster Hunter audio servers
+
+on:
+  push:
+    branches: ["v3.2-official-audio"]
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Search current official hot-update lists for act24side audio
+        run: |
+          python3 - <<'PY' | tee v32-act24side-servers.txt
+          import json, urllib.request
+          configs={
+            'kr':'https://ak-conf.arknights.kr/config/prod/official/network_config',
+            'en':'https://ak-conf.arknights.global/config/prod/official/network_config',
+            'jp':'https://ak-conf.arknights.jp/config/prod/official/network_config',
+            'tw':'https://ak-conf-tw.gryphline.com/config/prod/official/network_config',
+            'cn':'https://ak-conf.hypergryph.com/config/prod/official/network_config',
+            'bili':'https://ak-conf.hypergryph.com/config/prod/b/network_config',
+          }
+          def gj(u):
+            req=urllib.request.Request(u,headers={'User-Agent':'RhodesReaderKR-v3.2-probe'})
+            with urllib.request.urlopen(req,timeout=60) as r:return json.load(r)
+          for server,url in configs.items():
+            try:
+              outer=gj(url); conf=json.loads(outer['content']); net=conf['configs'][conf['funcVer']]['network']
+              ver=gj(net['hv'].replace('{0}','Android')); res=ver['resVersion']; base=f"{net['hu']}/Android/assets/{res}"
+              hot=gj(base+'/hot_update_list.json')
+              hits=[]
+              for x in hot['abInfos']:
+                n=str(x.get('name') or '')
+                low=n.lower()
+                if 'act24side' in low and low.startswith('audio/'):
+                  hits.append(n)
+              print('\nSERVER',server,'resVersion',res,'HITS',len(hits),'BASE',base)
+              for n in hits: print(n)
+            except Exception as e:
+              print('\nSERVER',server,'ERROR',repr(e))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v32-act24side-server-probe
+          path: v32-act24side-servers.txt
+          retention-days: 7
