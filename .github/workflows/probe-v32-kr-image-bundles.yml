@@ -1,0 +1,39 @@
+name: Probe v3.2 current KR AVG bundles
+
+on:
+  push:
+    branches: ["v3.2-build-private"]
+    paths: ["KR_IMAGE_BUNDLE_TRIGGER"]
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Locate representative missing image bundles
+        run: |
+          python3 - <<'PY' | tee v32-kr-image-bundles.txt
+          import json,urllib.request
+          def gj(u):
+            q=urllib.request.Request(u,headers={'User-Agent':'RhodesReaderKR-v3.2-image-probe'})
+            with urllib.request.urlopen(q,timeout=60) as r:return json.load(r)
+          outer=gj('https://ak-conf.arknights.kr/config/prod/official/network_config')
+          conf=json.loads(outer['content']);net=conf['configs'][conf['funcVer']]['network']
+          ver=gj(net['hv'].replace('{0}','Android'));res=ver['resVersion'];base=f"{net['hu']}/Android/assets/{res}"
+          infos=gj(base+'/hot_update_list.json')['abInfos']
+          probes=['avg_npc_1777_1','avg_npc_2040_1','avg_npc_2136_1','avg_172_svrash_1','avg_474_gladiia_1','char_1504_cqbw','cgitem_61_i06','lungmen']
+          print('resVersion',res,'total bundles',len(infos))
+          for p in probes:
+            hits=[str(x.get('name') or '') for x in infos if p.lower() in str(x.get('name') or '').lower()]
+            print('\n',p,len(hits))
+            for h in hits[:50]:print(' ',h)
+          print('\nAVG_CHARACTER_BUNDLES',sum(1 for x in infos if 'avg/characters' in str(x.get('name') or '').lower()))
+          print('AVG_IMAGE_BUNDLES',sum(1 for x in infos if 'avg/images' in str(x.get('name') or '').lower()))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v32-kr-image-bundle-probe
+          path: v32-kr-image-bundles.txt
+          retention-days: 7
