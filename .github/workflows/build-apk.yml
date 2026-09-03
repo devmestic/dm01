@@ -2,8 +2,6 @@ name: Build Android APK
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ "main" ]
 
 permissions:
   contents: write
@@ -12,52 +10,4 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
-        run: yes | sdkmanager "platforms;android-36" "build-tools;36.0.0"
-
-      - name: Set up Gradle 9.6
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '9.6.0'
-
-      - name: Build debug APK
-        run: gradle --no-daemon :app:assembleDebug
-
-      - name: Stage APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk RhodesReaderKR-v1.0.0-debug.apk
-
-      - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: RhodesReaderKR-v1.0.0-debug
-          path: RhodesReaderKR-v1.0.0-debug.apk
-
-      - name: Publish installable APK release
-        if: github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v1.0.0
-          name: Rhodes Reader KR v1.0.0
-          body: |
-            Android app wrapper for the Korean Arknights Story Text Reader.
-
-            - Korean server opens by default
-            - Restores the last page and scroll position
-            - Bookmarks
-            - Text size controls
-            - Keep-screen-on toggle
-            - HTTPS-only reader navigation
-          files: RhodesReaderKR-v1.0.0-debug.apk
-          make_latest: true
+      - run: echo "Offline v2 migration in progress"
