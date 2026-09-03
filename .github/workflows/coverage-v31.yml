@@ -24,7 +24,7 @@ jobs:
         run: git clone --depth=1 --filter=blob:none --no-checkout https://github.com/Aceship/Arknight-Images.git aceship
       - name: Index complete audio main branch
         run: git clone --depth=1 --filter=blob:none --no-checkout --branch main https://github.com/PseudoMon/arknights-audio.git audio
-      - name: Measure coverage
+      - name: Measure coverage with v3.1 aliases
         run: python3 scripts/coverage_v31.py story fexli aceship audio | tee coverage-v31.txt
       - uses: actions/upload-artifact@v4
         with:
