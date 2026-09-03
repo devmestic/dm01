@@ -3,12 +3,17 @@ import hashlib
 import json
 import re
 import shutil
+import subprocess
 import sys
+import time
+import urllib.parse
+import urllib.request
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 if len(sys.argv) != 4:
-    raise SystemExit("usage: prepare_full_assets.py <ArknightsStoryJson> <ArknightsResource> <arknights-audio>")
+    raise SystemExit("usage: prepare_full_assets.py <ArknightsStoryJson> <ArknightsResource-git> <arknights-audio-git>")
 
 story_repo = Path(sys.argv[1]).resolve()
 image_repo = Path(sys.argv[2]).resolve()
@@ -16,8 +21,6 @@ audio_repo = Path(sys.argv[3]).resolve()
 
 story_source = story_repo / "ko_KR" / "gamedata" / "story"
 banner_source = story_repo / "img" / "banners"
-image_source = image_repo / "avgs"
-audio_roots = [audio_repo / "music", audio_repo / "avg", audio_repo / "player"]
 
 project_root = Path(__file__).resolve().parents[1]
 out_root = project_root / "app" / "src" / "main" / "assets"
@@ -27,11 +30,11 @@ out_images = out_media / "images"
 out_audio = out_media / "audio"
 out_banners = out_media / "banners"
 
-for required in (story_source, image_source):
-    if not required.is_dir():
-        raise SystemExit(f"required source not found: {required}")
-if not any(p.is_dir() for p in audio_roots):
-    raise SystemExit(f"audio source not found below: {audio_repo}")
+if not story_source.is_dir():
+    raise SystemExit(f"story source not found: {story_source}")
+for repo in (image_repo, audio_repo):
+    if not (repo / ".git").is_dir():
+        raise SystemExit(f"filtered git repository not found: {repo}")
 
 for path in (out_story, out_media):
     if path.exists():
@@ -47,6 +50,7 @@ image_requests = {"background": set(), "image": set(), "character": set()}
 audio_requests = {"music": set(), "sfx": set()}
 event_ids = set()
 
+
 def clean_key(value):
     if value is None:
         return ""
@@ -54,6 +58,7 @@ def clean_key(value):
     if value.startswith("$"):
         value = value[1:]
     return value.strip()
+
 
 def add_audio(kind, raw):
     key = clean_key(raw)
@@ -63,6 +68,7 @@ def add_audio(kind, raw):
         part = clean_key(part)
         if part:
             audio_requests[kind].add(part)
+
 
 def inspect_story(data):
     for line in data.get("storyList", []):
@@ -81,8 +87,8 @@ def inspect_story(data):
                 image_requests["image"].add(image)
 
         if prop == "character":
-            for k in ("name", "name2"):
-                value = clean_key(attrs.get(k))
+            for field in ("name", "name2"):
+                value = clean_key(attrs.get(field))
                 if value:
                     image_requests["character"].add(value)
 
@@ -94,9 +100,10 @@ def inspect_story(data):
             add_audio("music", attrs.get("key"))
             add_audio("music", attrs.get("intro"))
         elif prop == "playsound":
-            for k, value in attrs.items():
-                if "key" in str(k).lower():
+            for field, value in attrs.items():
+                if "key" in str(field).lower():
                     add_audio("sfx", value)
+
 
 for src in sorted(story_source.rglob("*.json")):
     rel = src.relative_to(story_source).as_posix()
@@ -129,57 +136,66 @@ for src in sorted(story_source.rglob("*.json")):
 if not stories:
     raise SystemExit("no story JSON files were packaged")
 
-index = {
-    "lang": "ko_KR",
-    "storyCount": len(stories),
-    "stories": stories,
-}
 with (out_root / "story_index.json").open("w", encoding="utf-8") as f:
-    json.dump(index, f, ensure_ascii=False, separators=(",", ":"))
+    json.dump({"lang": "ko_KR", "storyCount": len(stories), "stories": stories},
+              f, ensure_ascii=False, separators=(",", ":"))
+
+
+def git_paths(repo, prefixes):
+    cmd = ["git", "-C", str(repo), "ls-tree", "-r", "--name-only", "HEAD", "--"] + list(prefixes)
+    text = subprocess.check_output(cmd, text=True, encoding="utf-8", errors="replace")
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
 
 def norm(value):
     return re.sub(r"[^a-z0-9]+", "", value.lower())
 
-def index_files(roots, extensions):
+
+def index_paths(paths, extensions):
     exact = defaultdict(list)
     normalized = defaultdict(list)
-    files = []
-    for root in roots:
-        if not root.is_dir():
+    usable = []
+    for raw in paths:
+        p = Path(raw)
+        if p.suffix.lower() not in extensions:
             continue
-        for p in root.rglob("*"):
-            if not p.is_file() or p.suffix.lower() not in extensions:
-                continue
-            files.append(p)
-            exact[p.stem.lower()].append(p)
-            n = norm(p.stem)
-            if n:
-                normalized[n].append(p)
-    return files, exact, normalized
+        usable.append(raw)
+        exact[p.stem.lower()].append(raw)
+        n = norm(p.stem)
+        if n:
+            normalized[n].append(raw)
+    return usable, exact, normalized
 
-image_files, image_exact, image_norm = index_files([image_source], {".png", ".jpg", ".jpeg", ".webp"})
-audio_files, audio_exact, audio_norm = index_files(audio_roots, {".mp3", ".ogg", ".wav", ".m4a"})
+
+print("Indexing image/audio trees without downloading repository blobs...")
+image_paths, image_exact, image_norm = index_paths(
+    git_paths(image_repo, ["avgs"]), {".png", ".jpg", ".jpeg", ".webp"})
+audio_paths, audio_exact, audio_norm = index_paths(
+    git_paths(audio_repo, ["music", "avg", "player"]), {".mp3", ".ogg", ".wav", ".m4a"})
+print(f"Indexed paths: images={len(image_paths)} audio={len(audio_paths)}")
+
 
 def rank_image(path, kind, key):
-    p = path.as_posix().lower()
+    p = path.lower()
+    stem = Path(path).stem
     score = 0
-    if path.stem.lower() == key.lower():
+    if stem.lower() == key.lower():
         score -= 1000
     if kind == "background":
         if "/bg/" in p:
-            score -= 300
+            score -= 400
         if "background" in p:
             score -= 50
     elif kind == "character":
-        if "char" in path.stem.lower() or "npc" in path.stem.lower():
-            score -= 150
+        if "char" in stem.lower() or "npc" in stem.lower():
+            score -= 180
         if "/bg/" in p:
-            score += 300
+            score += 400
     else:
         if "/bg/" in p:
-            score += 200
-    score += len(path.parts)
-    return score
+            score += 250
+    return score + path.count("/")
+
 
 def find_image(kind, key):
     candidates = list(image_exact.get(key.lower(), []))
@@ -189,37 +205,37 @@ def find_image(kind, key):
             key.replace("$", "_"),
             key.replace("#", "_0"),
         ]
-        for v in variants:
-            candidates.extend(image_exact.get(v.lower(), []))
+        for value in variants:
+            candidates.extend(image_exact.get(value.lower(), []))
     if not candidates:
         candidates = list(image_norm.get(norm(key), []))
     if not candidates:
         return None
     return sorted(set(candidates), key=lambda p: rank_image(p, kind, key))[0]
 
+
 def rank_audio(path, kind, key):
-    p = path.as_posix().lower()
+    p = path.lower()
     score = 0
-    if path.stem.lower() == key.lower():
+    if Path(path).stem.lower() == key.lower():
         score -= 1000
     if kind == "music":
-        if "/music/" in p:
-            score -= 300
+        if p.startswith("music/"):
+            score -= 400
     else:
-        if "/avg/" in p:
-            score -= 300
-        elif "/player/" in p:
-            score -= 150
-        if "/music/" in p:
-            score += 100
-    score += len(path.parts)
-    return score
+        if p.startswith("avg/"):
+            score -= 400
+        elif p.startswith("player/"):
+            score -= 200
+        if p.startswith("music/"):
+            score += 150
+    return score + path.count("/")
+
 
 def find_audio(kind, key):
     candidates = list(audio_exact.get(key.lower(), []))
     if not candidates:
-        n = norm(key)
-        candidates = list(audio_norm.get(n, []))
+        candidates = list(audio_norm.get(norm(key), []))
     if not candidates:
         n = norm(key)
         fuzzy = []
@@ -227,24 +243,26 @@ def find_audio(kind, key):
             for stem_norm, paths in audio_norm.items():
                 if n in stem_norm or stem_norm in n:
                     fuzzy.extend(paths)
-                    if len(fuzzy) > 12:
+                    if len(fuzzy) > 20:
                         break
-        if len(fuzzy) == 1:
-            candidates = fuzzy
-        elif fuzzy:
-            stems = {p.stem.lower() for p in fuzzy}
-            if len(stems) == 1:
+        if fuzzy:
+            distinct = {Path(p).stem.lower() for p in fuzzy}
+            if len(distinct) == 1 or len(fuzzy) <= 3:
                 candidates = fuzzy
     if not candidates:
         return None
     return sorted(set(candidates), key=lambda p: rank_audio(p, kind, key))[0]
 
-def copy_asset(src, dest_dir, namespace, key):
-    digest = hashlib.sha1((namespace + "\0" + key + "\0" + src.as_posix()).encode("utf-8")).hexdigest()[:20]
-    dest = dest_dir / f"{digest}{src.suffix.lower()}"
-    if not dest.exists():
-        shutil.copy2(src, dest)
-    return dest.relative_to(out_root).as_posix()
+
+def raw_url(repo_slug, ref, path):
+    quoted = urllib.parse.quote(path, safe="/")
+    return f"https://raw.githubusercontent.com/{repo_slug}/{ref}/{quoted}"
+
+
+def dest_for(source_id, source_path, media_dir):
+    digest = hashlib.sha1((source_id + "\0" + source_path).encode("utf-8")).hexdigest()[:24]
+    return media_dir / f"{digest}{Path(source_path).suffix.lower()}"
+
 
 media = {
     "version": 3,
@@ -253,31 +271,96 @@ media = {
     "banners": {},
     "stats": {},
 }
-missing_images = {k: [] for k in image_requests}
-missing_audio = {k: [] for k in audio_requests}
+missing_images = {kind: [] for kind in image_requests}
+missing_audio = {kind: [] for kind in audio_requests}
+assignments = []
 
 for kind in ("background", "image", "character"):
     for key in sorted(image_requests[kind]):
-        src = find_image(kind, key)
-        if src:
-            media["images"][kind][key] = copy_asset(src, out_images, f"image:{kind}", key)
-        else:
+        source_path = find_image(kind, key)
+        if source_path is None:
             missing_images[kind].append(key)
+            continue
+        dest = dest_for("fexli/ArknightsResource@main", source_path, out_images)
+        assignments.append(("image", kind, key, source_path,
+                            raw_url("fexli/ArknightsResource", "main", source_path), dest))
 
 for kind in ("music", "sfx"):
     for key in sorted(audio_requests[kind]):
-        src = find_audio(kind, key)
-        if src:
-            media["audio"][kind][key] = copy_asset(src, out_audio, f"audio:{kind}", key)
-        else:
+        source_path = find_audio(kind, key)
+        if source_path is None:
             missing_audio[kind].append(key)
+            continue
+        dest = dest_for("PseudoMon/arknights-audio@global-server-voices", source_path, out_audio)
+        assignments.append(("audio", kind, key, source_path,
+                            raw_url("PseudoMon/arknights-audio", "global-server-voices", source_path), dest))
+
+
+def download_one(url, dest):
+    if dest.exists() and dest.stat().st_size > 0:
+        return True, None
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    last = None
+    for attempt in range(4):
+        try:
+            request = urllib.request.Request(url, headers={"User-Agent": "RhodesReaderKR-build/3.0"})
+            with urllib.request.urlopen(request, timeout=90) as response, dest.open("wb") as out:
+                shutil.copyfileobj(response, out, 1024 * 1024)
+            if dest.stat().st_size <= 0:
+                raise IOError("downloaded file is empty")
+            return True, None
+        except Exception as exc:
+            last = exc
+            try:
+                dest.unlink(missing_ok=True)
+            except Exception:
+                pass
+            time.sleep(1.5 * (attempt + 1))
+    return False, str(last)
+
+
+unique = {}
+for assignment in assignments:
+    unique[(assignment[4], assignment[5])] = None
+print(f"Downloading {len(unique)} unique story-referenced media files...")
+results = {}
+with ThreadPoolExecutor(max_workers=20) as pool:
+    futures = {pool.submit(download_one, url, dest): (url, dest) for url, dest in unique}
+    done = 0
+    for future in as_completed(futures):
+        url, dest = futures[future]
+        ok, error = future.result()
+        results[(url, dest)] = (ok, error)
+        done += 1
+        if done % 100 == 0 or done == len(futures):
+            print(f"  media downloads {done}/{len(futures)}")
+
+for media_type, kind, key, source_path, url, dest in assignments:
+    ok, error = results.get((url, dest), (False, "missing download result"))
+    if ok:
+        rel = dest.relative_to(out_root).as_posix()
+        if media_type == "image":
+            media["images"][kind][key] = rel
+        else:
+            media["audio"][kind][key] = rel
+    else:
+        if media_type == "image":
+            if key not in missing_images[kind]:
+                missing_images[kind].append(key)
+        else:
+            if key not in missing_audio[kind]:
+                missing_audio[kind].append(key)
+        print(f"WARN download failed: {source_path}: {error}", file=sys.stderr)
 
 if banner_source.is_dir():
     banner_index = {p.stem: p for p in banner_source.glob("*.png")}
     for event_id in sorted(event_ids):
         src = banner_index.get(event_id)
         if src:
-            media["banners"][event_id] = copy_asset(src, out_banners, "banner", event_id)
+            dest = dest_for("050644zf/ArknightsStoryJson@main", f"img/banners/{src.name}", out_banners)
+            if not dest.exists():
+                shutil.copy2(src, dest)
+            media["banners"][event_id] = dest.relative_to(out_root).as_posix()
 
 story_size = sum(p.stat().st_size for p in out_story.rglob("*.json"))
 image_size = sum(p.stat().st_size for p in out_images.rglob("*") if p.is_file())
@@ -286,8 +369,8 @@ banner_size = sum(p.stat().st_size for p in out_banners.rglob("*") if p.is_file(
 
 media["stats"] = {
     "storyCount": len(stories),
-    "imageSourceFilesIndexed": len(image_files),
-    "audioSourceFilesIndexed": len(audio_files),
+    "imageSourceFilesIndexed": len(image_paths),
+    "audioSourceFilesIndexed": len(audio_paths),
     "backgroundRequested": len(image_requests["background"]),
     "backgroundFound": len(media["images"]["background"]),
     "imageRequested": len(image_requests["image"]),
@@ -303,28 +386,29 @@ media["stats"] = {
     "imageBytes": image_size,
     "audioBytes": audio_size,
     "bannerBytes": banner_size,
-    "missingBackground": missing_images["background"][:100],
-    "missingImage": missing_images["image"][:100],
-    "missingCharacter": missing_images["character"][:100],
-    "missingMusic": missing_audio["music"][:100],
-    "missingSfx": missing_audio["sfx"][:100],
+    "missingBackground": sorted(missing_images["background"])[:200],
+    "missingImage": sorted(missing_images["image"])[:200],
+    "missingCharacter": sorted(missing_images["character"])[:200],
+    "missingMusic": sorted(missing_audio["music"])[:200],
+    "missingSfx": sorted(missing_audio["sfx"])[:200],
 }
 
 with (out_root / "media_index.json").open("w", encoding="utf-8") as f:
     json.dump(media, f, ensure_ascii=False, separators=(",", ":"))
+
 
 def pct(found, requested):
     return 100.0 if requested == 0 else found * 100.0 / requested
 
 print(f"Stories: {len(stories)} ({story_size / 1024 / 1024:.1f} MiB raw JSON)")
 for kind in ("background", "image", "character"):
-    req = len(image_requests[kind])
+    requested = len(image_requests[kind])
     found = len(media["images"][kind])
-    print(f"Images {kind}: {found}/{req} ({pct(found, req):.1f}%)")
+    print(f"Images {kind}: {found}/{requested} ({pct(found, requested):.1f}%)")
 for kind in ("music", "sfx"):
-    req = len(audio_requests[kind])
+    requested = len(audio_requests[kind])
     found = len(media["audio"][kind])
-    print(f"Audio {kind}: {found}/{req} ({pct(found, req):.1f}%)")
+    print(f"Audio {kind}: {found}/{requested} ({pct(found, requested):.1f}%)")
 print(f"Banners: {len(media['banners'])}")
 print(f"Packaged media: images={image_size/1024/1024:.1f} MiB audio={audio_size/1024/1024:.1f} MiB banners={banner_size/1024/1024:.1f} MiB")
 if errors:
