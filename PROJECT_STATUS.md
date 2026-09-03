@@ -1,28 +1,25 @@
-# PROJECT STATUS
+# Rhodes Reader KR · Project Status
 
-## Rhodes Reader KR v2.0.0
+## Current
 
-Status: release candidate
+- Target: v3.0.0 Full Local Media
+- Architecture: Android native UI → bundled story JSON + bundled story-referenced media → local rendering/playback
+- WebView: none
+- INTERNET permission: none
+- Public media release: disabled
 
-Architecture:
-- Native Android Activity/UI
-- No WebView
-- No INTERNET permission
-- All Korean story JSON files embedded into APK assets during CI build
-- Build-time generated story index
+## v3 scope
 
-Implemented:
-- Event browser
-- Full-text metadata search
-- Native story renderer for dialogue/multiline/subtitle/sticker/decision/predicate/comment
-- Fallback rendering for future text-bearing story commands
-- Per-story reading position persistence
-- Bookmarks
-- Last-read story
-- Text scaling
-- Keep-screen-on preference
-- GitHub Actions offline dataset packaging and APK verification
+- [x] Full Korean story JSON bundling
+- [x] Media reference collector for background/image/character/music/SFX commands
+- [x] Event banner pack
+- [x] Local image renderer
+- [x] Local character/NPC cut renderer
+- [x] Local BGM loop playback
+- [x] Local SFX playback
+- [x] Media coverage statistics in `media_index.json`
+- [x] Native reader/search/bookmarks/reading-position persistence
+- [ ] CI coverage verification against current upstream snapshot
+- [ ] Installable v3 artifact verification
 
-Data scope:
-- Complete `ko_KR/gamedata/story/**/*.json` dataset from `050644zf/ArknightsStoryJson`
-- Text/story commands only. Game images/audio are intentionally not bundled.
+The two unchecked items are completed only after the GitHub Actions full-media build succeeds.
