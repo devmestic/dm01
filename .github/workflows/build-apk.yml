@@ -41,7 +41,7 @@ jobs:
       - name: Fetch Korean story variables
         run: |
           git clone --depth=1 --filter=blob:none --sparse https://github.com/ArknightsAssets/ArknightsGamedata.git upstream-gamedata
-          git -C upstream-gamedata sparse-checkout set kr/gamedata/story/story_variables.json
+          git -C upstream-gamedata sparse-checkout set kr/gamedata/story
           test -s upstream-gamedata/kr/gamedata/story/story_variables.json
 
       - name: Index baseline images and audio
