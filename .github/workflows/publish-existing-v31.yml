@@ -1,0 +1,56 @@
+name: Publish verified v3.1 APK
+
+on:
+  push:
+    branches: [ "v3.1-release-fast" ]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download verified v3.1 build artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: RhodesReaderKR-v3.1.0-max-media-offline
+          path: dist
+          github-token: ${{ github.token }}
+          repository: devmestic/dm01
+          run-id: 33768185014
+
+      - name: Verify downloaded APK
+        run: |
+          test -s dist/RhodesReaderKR-v3.1.0-max-media-offline.apk
+          test -s dist/RhodesReaderKR-v3.1.0-max-media-offline.apk.sha256
+          cd dist
+          sha256sum -c RhodesReaderKR-v3.1.0-max-media-offline.apk.sha256
+          ls -lh RhodesReaderKR-v3.1.0-max-media-offline.apk
+
+      - name: Publish v3.1.0 release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v3.1.0
+          name: Rhodes Reader KR v3.1.0
+          target_commitish: 034da9e93149f5e1de0b2342ac3ffbfd433edc90
+          make_latest: true
+          body: |
+            Rhodes Reader KR v3.1.0 Max Media Offline
+
+            한국어 스토리 1,895편과 공개 소스에서 실제로 확인 가능한 스토리 이미지/오디오를 오프라인으로 포함합니다.
+
+            검증된 미디어 커버리지:
+            - 배경: 882/882
+            - 일반 스토리 이미지: 1326/1328
+            - 캐릭터 스프라이트: 9021/9225
+            - BGM: 210/449
+            - SFX: 664/1394
+
+            공개 자산에 실제 파일이 없는 항목을 임의의 다른 미디어로 대체하지 않았습니다.
+          files: |
+            dist/RhodesReaderKR-v3.1.0-max-media-offline.apk
+            dist/RhodesReaderKR-v3.1.0-max-media-offline.apk.sha256
