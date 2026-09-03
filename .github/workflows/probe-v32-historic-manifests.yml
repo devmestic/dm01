@@ -1,0 +1,57 @@
+name: Probe v3.2 historic manifests
+
+on:
+  push:
+    branches: ["v3.2-official-audio"]
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect early NewAssets manifests and old CDN paths
+        run: |
+          python3 - <<'PY' | tee v32-historic-manifests.txt
+          import json,urllib.request,urllib.error
+          commits=['ea96ccb78782009eaf4e78bb7c2f7f5aca997a00','80785dcc9123bd15e52d14ee914999f687f5bc76','18882e7774bd3933d85ea71487d53255167e8393','9c3bc43448827985c28e50138f9cfc7ea18932bb']
+          servers={
+            'kr':('https://ark-kr-static-online-1300509597.yo-star.com/assetbundle/official/Android/assets','hot_update_list-kr.json'),
+            'en':('https://ark-us-static-online.yo-star.com/assetbundle/official/Android/assets','hot_update_list-en.json'),
+            'jp':('https://ark-jp-static-online.yo-star.com/assetbundle/official/Android/assets','hot_update_list-jp.json'),
+            'tw':('https://ak-tw.hg-cdn.com/assetbundle/official/Android/assets','hot_update_list-tw.json'),
+            'cn':('https://ak.hycdn.cn/assetbundle/official/Android/assets','hot_update_list-cn.json'),
+          }
+          def getjson(url):
+            q=urllib.request.Request(url,headers={'User-Agent':'RhodesReaderKR-v3.2-history'})
+            with urllib.request.urlopen(q,timeout=90) as r:return json.load(r)
+          def dat(n):return n.replace('/','_').replace('#','__').rsplit('.',1)[0]+'.dat'
+          tested=set()
+          for commit in commits:
+            print('\nCOMMIT',commit)
+            for s,(cdn,fn) in servers.items():
+              url=f'https://raw.githubusercontent.com/ArknightsAssets/NewAssets/{commit}/{fn}'
+              try:d=getjson(url)
+              except Exception as e:
+                print('MANIFEST_ERR',s,repr(e));continue
+              ver=str(d.get('versionId') or d.get('version') or '')
+              hits=[str(x.get('name') or '') for x in d.get('abInfos',[]) if 'act24side' in str(x.get('name') or '').lower() and str(x.get('name') or '').lower().startswith('audio/')]
+              print('SERVER',s,'VER',ver,'ACT24_HITS',len(hits))
+              for h in hits:print(' ',h)
+              for h in hits:
+                key=(s,ver,h)
+                if not ver or key in tested:continue
+                tested.add(key);asset=f'{cdn}/{ver}/{dat(h)}'
+                try:
+                  q=urllib.request.Request(asset,headers={'User-Agent':'RhodesReaderKR-v3.2-history','Range':'bytes=0-0'})
+                  with urllib.request.urlopen(q,timeout=45) as r:
+                    print('CDN_ALIVE',s,ver,h,'status',r.status,'size',r.headers.get('Content-Range') or r.headers.get('Content-Length'))
+                except urllib.error.HTTPError as e:print('CDN_HTTP',s,ver,h,e.code)
+                except Exception as e:print('CDN_ERR',s,ver,h,repr(e))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v32-historic-manifests-probe
+          path: v32-historic-manifests.txt
+          retention-days: 7
