@@ -1,0 +1,33 @@
+name: Probe v3.2 official KR character bundles
+on:
+  push:
+    branches: ["v3.2-finalize"]
+    paths: ['.github/workflows/probe-v32-character-bundles.yml']
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe manifest
+        run: |
+          python3 - <<'PY' | tee v32-character-bundles.txt
+          import json,urllib.request
+          bases='''avg_4188_confes_1 avg_4194_rmixer_1 avg_npc_1777_1 avg_npc_1778_1 avg_npc_1781_1 avg_npc_1785_1 avg_npc_1786_1 avg_npc_1787_1 avg_npc_1788_1 avg_npc_1789_1 avg_npc_1790_1 avg_npc_1791_1 avg_npc_1792_1 avg_npc_1795_1 avg_npc_1796_1 avg_npc_1797_1 avg_npc_1799_1 avg_npc_1801_1 avg_npc_1808_1 avg_npc_1836_1 avg_npc_1841_1 avg_npc_1845_1 avg_npc_1846_1 avg_npc_1847_1 avg_npc_1848_1 avg_npc_1870_1 avg_npc_1874_1 avg_npc_1904_1 avg_npc_1905_1 avg_npc_1906_1 avg_npc_1907_1 avg_npc_1908_1 avg_npc_1909_1 avg_npc_1911_1 avg_npc_1912_1 avg_npc_1914_1 avg_npc_1915_1 avg_npc_1916_1 avg_npc_1917_1 avg_npc_1919_1 avg_npc_1937_1 avg_npc_1939_1 avg_npc_1964_1 avg_npc_1969_1 avg_npc_1970_1 avg_npc_1972_1 avg_npc_1973_1 avg_npc_1974_1 avg_npc_1975_1 avg_npc_1976_1 avg_npc_1977_1 avg_npc_1978_1 avg_npc_1979_1 avg_npc_1981_1 avg_npc_1982_1 avg_npc_2000_1 avg_npc_2002_1 avg_npc_2004_1 avg_npc_2005_1 avg_npc_2007_1 avg_npc_2014_1 avg_npc_2040_1 avg_npc_2043_1 avg_npc_2044_1 avg_npc_2045_1 avg_npc_2046_1 avg_npc_2047_1 avg_npc_2049_1 avg_npc_2050_1 avg_npc_2051_1 avg_npc_2071_1 avg_npc_2072_1 avg_npc_2073_1 avg_npc_2074_1 avg_npc_2075_1 avg_npc_2076_1 avg_npc_2081_1 avg_npc_2082_1 avg_npc_2083_1 avg_npc_2084_1 avg_npc_2085_1 avg_npc_2086_1 avg_npc_2087_1 avg_npc_2088_1 avg_npc_2089_1 avg_npc_2090_1 avg_npc_2132_1 avg_npc_2133_1 avg_npc_2134_1 avg_npc_2135_1 avg_npc_2136_1 char_2006_weiywfmzuki_1'''.split()
+          def gj(u):
+            r=urllib.request.Request(u,headers={'User-Agent':'RhodesReaderKR-v3.2'})
+            with urllib.request.urlopen(r,timeout=90) as x:return json.load(x)
+          outer=gj('https://ak-conf.arknights.kr/config/prod/official/network_config'); conf=json.loads(outer['content']); net=conf['configs'][conf['funcVer']]['network']; ver=gj(net['hv'].replace('{0}','Android')); rv=ver['resVersion']; base=f"{net['hu']}/Android/assets/{rv}"; hot=gj(base+'/hot_update_list.json'); names=[str(x.get('name','')) for x in hot['abInfos']]
+          found=0
+          for b in bases:
+            exact=[n for n in names if n.lower()==f'avg/characters/{b}.ab'.lower()]
+            near=[n for n in names if b.lower() in n.lower() and n.lower().startswith('avg/characters/')]
+            if exact: found+=1
+            print(b,'EXACT',exact,'NEAR',near[:8])
+          print('EXACT FOUND',found,'/',len(bases),'RES',rv)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v32-character-bundles
+          path: v32-character-bundles.txt
+          retention-days: 7
