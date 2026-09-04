@@ -72,6 +72,11 @@ jobs:
         run: |
           python3 scripts/supplement_official_audio_v32.py app/src/main/assets/story upstream-gamedata/kr/gamedata/story/story_variables.json | tee official-audio-v32-report.txt
 
+      - name: Extract current KR official character images
+        run: |
+          python3 scripts/supplement_official_images_v32.py | tee official-images-v32-report.txt
+          du -sh app/src/main/assets
+
       - name: Index historical assets for removed collaboration media
         run: git clone --filter=blob:none --no-checkout https://github.com/ArknightsAssets/ArknightsAssets2.git upstream-assets2-history
 
@@ -153,7 +158,9 @@ jobs:
             full-media-report.txt
             supplement-v31-report.txt
             official-audio-v32-report.txt
+            official-images-v32-report.txt
             v32-official-audio-report.json
+            v32-official-image-report.json
             finalize-v32-report.txt
             optimize-media-report.txt
             v32-source.sha256
