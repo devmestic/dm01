@@ -1,0 +1,56 @@
+name: Probe v3.2 historical missing character assets
+
+on:
+  push:
+    branches: ["v3.2-finalize"]
+    paths: ['.github/workflows/probe-v32-history-missing14.yml']
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Search Assets2 history
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/ArknightsAssets/ArknightsAssets2.git hist
+          git -C hist fetch --all --tags --prune
+          python3 - <<'PY' | tee history-missing14.txt
+          import subprocess,re
+          keys=['avg_npc_135#1','avg_npc_135#2','avg_npc_135#3','avg_npc_135#4','avg_npc_136#1','avg_npc_136#4','char_148_nearl_1#8','char_1502_crowns#2','char_2006_weiywfmzuki_1','char_201_moeshd#8','char_219_meteo_1#7','char_242_mayer#1','char_259_Jessica_1#3','char_259_Jessica_1#7']
+          def sh(args):
+              return subprocess.check_output(args,text=True,errors='replace')
+          objects=sh(['git','-C','hist','rev-list','--all','--objects']).splitlines()
+          paths=[]
+          for line in objects:
+              p=line.split(' ',1)[1] if ' ' in line else ''
+              if p.lower().endswith(('.png','.jpg','.jpeg','.webp')): paths.append(p)
+          print('IMAGE HISTORY PATHS',len(paths))
+          for key in keys:
+              base=re.split(r'[#\\$]',key,1)[0]
+              expr=''
+              m=re.search(r'#([^$]+)',key)
+              if m:expr=m.group(1).lstrip('0') or '0'
+              toks=[t for t in re.split(r'[_#\\$]+',base.lower()) if len(t)>=3]
+              c=[]
+              for p in paths:
+                  pl=p.lower()
+                  if base.lower() in pl or all(t in pl for t in toks[-2:]):
+                      score=0
+                      stem=p.rsplit('/',1)[-1].rsplit('.',1)[0].lower()
+                      if base.lower() in stem:score-=20
+                      if expr and (stem.endswith('_'+expr) or ('#'+expr) in stem or ('$'+expr) in stem):score-=20
+                      if '/avg/characters/' in pl:score-=10
+                      c.append((score,len(p),p))
+              c.sort()
+              print('\nKEY',key,'BASE',base,'EXPR',expr,'CAND',len(c))
+              for _,__,p in c[:50]:
+                  commits=sh(['git','-C','hist','log','--all','--format=%H','--',p]).splitlines()
+                  print(' PATH',p,'COMMITS',commits[:3])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v32-history-missing14
+          path: history-missing14.txt
+          retention-days: 7
