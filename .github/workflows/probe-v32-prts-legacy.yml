@@ -1,0 +1,40 @@
+name: Probe v3.2 PRTS legacy images
+
+on:
+  push:
+    branches: [ "v3.2-finalize" ]
+    paths:
+      - '.github/workflows/probe-v32-prts-legacy.yml'
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Probe exact legacy AVG files
+        shell: bash
+        run: |
+          set -u
+          files=(
+            'Avg_avg_148_nearl_1-8$1.png'
+            'Avg_avg_1502_crowns_1-2$1.png'
+            'Avg_avg_201_moeshd_1-8$1.png'
+            'Avg_avg_219_meteo_1-7$1.png'
+            'Avg_avg_242_mayer_1-1$1.png'
+            'Avg_avg_259_jessica_1-3$1.png'
+            'Avg_avg_259_jessica_1-7$1.png'
+          )
+          ok=0
+          for f in "${files[@]}"; do
+            enc=$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$f")
+            url="https://prts.wiki/w/Special:Redirect/file/$enc"
+            out="/tmp/${f//\$/_}"
+            code=$(curl -L --retry 2 --connect-timeout 15 --max-time 60 -sS -w '%{http_code}' -o "$out" "$url" || true)
+            size=$(stat -c %s "$out" 2>/dev/null || echo 0)
+            type=$(file -b "$out" 2>/dev/null || true)
+            final=$(curl -L -sS -o /dev/null -w '%{url_effective}' "$url" || true)
+            echo "PROBE|$f|HTTP=$code|SIZE=$size|TYPE=$type|FINAL=$final"
+            if [[ "$code" == "200" && "$size" -gt 1000 && "$type" == *PNG* ]]; then ok=$((ok+1)); fi
+          done
+          echo "PRTS_EXACT_OK=$ok/7"
