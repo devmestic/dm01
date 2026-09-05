@@ -12,34 +12,18 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - name: Query PRTS legacy AVG image index
+      - name: Query broad PRTS legacy AVG prefixes
         run: |
           python3 - <<'PY'
           import json, urllib.parse, urllib.request
-          prefixes = [
-              'Avg_avg_148_nearl',
-              'Avg_avg_1502_crowns',
-              'Avg_avg_242_mayer',
-              'Avg_avg_242_otter',
-              'Avg_avg_259_jessica',
-              'Avg_avg_259_Jessica',
-              'Avg_avg_201_moeshd',
-              'Avg_avg_219_meteo',
-          ]
+          prefixes = ['Avg_avg_148','Avg_avg_1502','Avg_avg_259']
           for prefix in prefixes:
-              q = urllib.parse.urlencode({
-                  'action':'query','format':'json','list':'allimages',
-                  'aiprefix':prefix,'ailimit':'500','aiprop':'url|size'
-              })
-              url='https://prts.wiki/api.php?'+q
+              q=urllib.parse.urlencode({'action':'query','format':'json','list':'allimages','aiprefix':prefix,'ailimit':'500','aiprop':'url|size'})
+              req=urllib.request.Request('https://prts.wiki/api.php?'+q,headers={'User-Agent':'RhodesReaderKR-v3.2-probe'})
               try:
-                  req=urllib.request.Request(url,headers={'User-Agent':'RhodesReaderKR-v3.2-probe'})
-                  with urllib.request.urlopen(req,timeout=45) as r:
-                      d=json.load(r)
+                  with urllib.request.urlopen(req,timeout=45) as r:d=json.load(r)
                   imgs=d.get('query',{}).get('allimages',[])
                   print('PREFIX',prefix,'COUNT',len(imgs))
-                  for x in imgs:
-                      print('IMAGE|'+str(x.get('name'))+'|'+str(x.get('url'))+'|'+str(x.get('size')))
-              except Exception as e:
-                  print('PREFIX_ERROR',prefix,repr(e))
+                  for x in imgs: print('IMAGE|'+str(x.get('name'))+'|'+str(x.get('url'))+'|'+str(x.get('size')))
+              except Exception as e: print('PREFIX_ERROR',prefix,repr(e))
           PY
