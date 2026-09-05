@@ -12,18 +12,20 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - name: Query broad PRTS legacy AVG prefixes
+      - name: Search PRTS file namespace for legacy AVG names
         run: |
           python3 - <<'PY'
           import json, urllib.parse, urllib.request
-          prefixes = ['Avg_avg_148','Avg_avg_1502','Avg_avg_259']
-          for prefix in prefixes:
-              q=urllib.parse.urlencode({'action':'query','format':'json','list':'allimages','aiprefix':prefix,'ailimit':'500','aiprop':'url|size'})
+          terms=['nearl','jessica','jesca','jesica']
+          for term in terms:
+              q=urllib.parse.urlencode({'action':'query','format':'json','list':'search','srsearch':term,'srnamespace':'6','srlimit':'500'})
               req=urllib.request.Request('https://prts.wiki/api.php?'+q,headers={'User-Agent':'RhodesReaderKR-v3.2-probe'})
               try:
                   with urllib.request.urlopen(req,timeout=45) as r:d=json.load(r)
-                  imgs=d.get('query',{}).get('allimages',[])
-                  print('PREFIX',prefix,'COUNT',len(imgs))
-                  for x in imgs: print('IMAGE|'+str(x.get('name'))+'|'+str(x.get('url'))+'|'+str(x.get('size')))
-              except Exception as e: print('PREFIX_ERROR',prefix,repr(e))
+                  hits=d.get('query',{}).get('search',[])
+                  print('TERM',term,'COUNT',len(hits))
+                  for x in hits:
+                      title=str(x.get('title') or '')
+                      if 'avg' in title.lower(): print('TITLE|'+title)
+              except Exception as e: print('TERM_ERROR',term,repr(e))
           PY
