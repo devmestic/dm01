@@ -66,8 +66,18 @@ def norm_expr(k):
     return re.sub(r'#0+(\d+)',lambda m:'#'+str(int(m.group(1))),k)
 def norm_loose(v):return re.sub(r'[^a-z0-9]+','',v.lower())
 
+EXPLICIT_OFFICIAL_ALIASES={
+    'avg_npc_135#1':['avg_npc_135_1#1'],
+    'avg_npc_135#2':['avg_npc_135_1#2'],
+    'avg_npc_135#3':['avg_npc_135_1#3'],
+    'avg_npc_135#4':['avg_npc_135_1#4'],
+    'avg_npc_136#1':['avg_npc_136_1#1'],
+    'avg_npc_136#4':['avg_npc_136_1#4'],
+    'char_2006_weiywfmzuki_1':['char_2006_fmzuki_1'],
+}
+
 def aliases(k):
-    out=[k,norm_expr(k)]
+    out=list(EXPLICIT_OFFICIAL_ALIASES.get(k,[]))+[k,norm_expr(k)]
     b=base_of(k)
     m=re.match(r'^(.*?)(?:#([^$]+))?(?:\$(.+))?$',k)
     expr=(m.group(2) if m else None); layer=(m.group(3) if m else None)
@@ -81,7 +91,6 @@ def aliases(k):
         out += [f'{b}${layer}']
     if not expr and not layer:
         out += [f'{b}#1',f'{b}$1',f'{b}#1$1',f'{b}_1',f'{b}_1#1',f'{b}_1#1$1']
-    # legacy char_/avg_ prefixes occasionally differ only by case or avg prefix
     if b.startswith('char_'):
         out += [x.replace('char_','avg_',1) for x in list(out) if x.startswith('char_')]
     return list(dict.fromkeys(x for x in out if x))

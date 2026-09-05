@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import hashlib, json, re, subprocess, sys
+import hashlib, json, re, subprocess, sys, urllib.request
 from pathlib import Path
 
 if len(sys.argv) != 4:
@@ -29,6 +29,18 @@ def materialize_current(path, outdir):
     dest.write_bytes(data)
     return dest.relative_to(AS).as_posix()
 
+def materialize_external_png(url):
+    req = urllib.request.Request(url, headers={'User-Agent':'RhodesReaderKR-v3.2-finalizer'})
+    with urllib.request.urlopen(req, timeout=120) as r:
+        data = r.read()
+    if not data.startswith(b'\x89PNG\r\n\x1a\n'):
+        raise RuntimeError('legacy image is not PNG: ' + url)
+    h = hashlib.sha1(('PRTS\0' + url).encode()).hexdigest()[:24]
+    dest = IM / (h + '.png')
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(data)
+    return dest.relative_to(AS).as_posix()
+
 chars = media.setdefault('images', {}).setdefault('character', {})
 # In AVG bundles #1 means the default face. These three are stored as base$1 PNGs.
 base_aliases = {
@@ -48,6 +60,63 @@ if not chars.get('char_242_mayer'):
         rel = materialize_current('assets/dyn/avg/characters/char_242_mayer/char_242_mayer#2.png', IM)
     chars['char_242_mayer'] = rel
     print('IMAGE DEFAULT FALLBACK char_242_mayer <- char_242_mayer#2')
+
+# Four removed legacy expressions still exist in the PRTS historical asset archive.
+legacy_exact = {
+    'char_1502_crowns#2': 'https://media.prts.wiki/b/bf/Avg_avg_1502_crosly_1-2%241.png',
+    'char_201_moeshd#8': 'https://media.prts.wiki/7/7a/Avg_avg_201_moeshd_1-8%241.png',
+    'char_219_meteo_1#7': 'https://media.prts.wiki/2/28/Avg_avg_219_meteo_1-7%241.png',
+    'char_242_mayer#1': 'https://media.prts.wiki/0/0c/Avg_avg_242_otter_1-1%241.png',
+}
+legacy_exact_ok = []
+legacy_exact_errors = []
+for key, url in legacy_exact.items():
+    if chars.get(key):
+        continue
+    try:
+        chars[key] = materialize_external_png(url)
+        legacy_exact_ok.append(key)
+        print('IMAGE LEGACY EXACT', key, '<-', url)
+    except Exception as e:
+        legacy_exact_errors.append(f'{key}:{e}')
+        print('IMAGE LEGACY EXACT ERROR', key, repr(e))
+
+# Three story-era expression numbers have disappeared from both the current KR bundle and public archives.
+# Keep the renderer non-blank by aliasing to the nearest surviving expression of the same character.
+legacy_compat = {
+    'char_148_nearl_1#8': ('assets/dyn/avg/characters/char_148_nearl_1/char_148_nearl_7.png', 'char_148_nearl_1#7'),
+    'char_259_Jessica_1#3': ('assets/dyn/avg/characters/char_259_jessica_1/char_259_jessica_2.png', 'char_259_Jessica_1#2'),
+    'char_259_Jessica_1#7': ('assets/dyn/avg/characters/char_259_jessica_1/char_259_jessica_6.png', 'char_259_Jessica_1#6'),
+}
+legacy_compat_used = []
+for key, (path, alias_key) in legacy_compat.items():
+    if chars.get(key):
+        continue
+    rel = chars.get(alias_key)
+    if not rel:
+        rel = materialize_current(path, IM)
+    chars[key] = rel
+    legacy_compat_used.append({'key':key,'alias':alias_key,'path':path})
+    print('IMAGE LEGACY COMPAT', key, '<-', alias_key, path)
+
+# If the historical mirror is temporarily unavailable, preserve no-blank behavior for the four exact legacy keys too.
+legacy_exact_fallback = {
+    'char_1502_crowns#2': ('char_1502_crowns', None),
+    'char_201_moeshd#8': ('char_201_moeshd#7', 'assets/dyn/avg/characters/char_201_moeshd/char_201_moeshd_7.png'),
+    'char_219_meteo_1#7': ('char_219_meteo_1#5', 'assets/dyn/avg/characters/char_219_meteo_1/char_219_meteo_5.png'),
+    'char_242_mayer#1': ('char_242_mayer#2', 'assets/dyn/avg/characters/char_242_mayer/char_242_mayer#2.png'),
+}
+for key, (alias_key, path) in legacy_exact_fallback.items():
+    if chars.get(key):
+        continue
+    rel = chars.get(alias_key)
+    if not rel and path:
+        rel = materialize_current(path, IM)
+    if not rel:
+        raise RuntimeError('cannot resolve legacy fallback: ' + key)
+    chars[key] = rel
+    legacy_compat_used.append({'key':key,'alias':alias_key,'path':path,'reason':'archive-download-failed'})
+    print('IMAGE LEGACY ARCHIVE FALLBACK', key, '<-', alias_key)
 
 # Recover audio that disappeared from live Hot Update (notably act24side) from Assets2 Git history.
 report = json.load(open(REPORT, encoding='utf-8'))
@@ -82,7 +151,6 @@ for kind in ('music', 'sfx'):
         if not paths:
             print('AUDIO HISTORY MISS', kind, key, clip)
             continue
-        # Prefer sound_beta_2 and act24side#retro when applicable.
         paths.sort(key=lambda p: (
             0 if 'sound_beta_2' in p.lower() else 1,
             0 if ('act24side#retro' in p.lower() and 'act24side' in clip.lower()) else 1,
@@ -150,6 +218,9 @@ for fp in STORY.rglob('*.json'):
 
 stats = media.setdefault('stats', {})
 stats['v32Finalized'] = True
+stats['v32LegacyExactRecovered'] = legacy_exact_ok
+stats['v32LegacyExactErrors'] = legacy_exact_errors
+stats['v32LegacyCompatAliases'] = legacy_compat_used
 for kind, keys in reqi.items():
     found = sum(1 for k in keys if media['images'][kind].get(k))
     stats[f'v32_{kind}Requested'] = len(keys)
